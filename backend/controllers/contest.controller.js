@@ -6,6 +6,9 @@ import {
   getSubmissionResult,
 } from "../services/judge0.service.js";
 
+import User from "../models/user.model.js";
+import Problem from "../models/problem.model.js";
+
 // POST /contest (Admin)
 export const createContest = async (req, res) => {
   try {
@@ -56,83 +59,6 @@ export const getContestById = async (req, res) => {
   }
 };
 
-// POST /contest/:id/submit
-export const submitToContest = async (req, res) => {
-  try {
-    const contestId = req.params.id;
-    const { problemId, sourceCode, languageId } = req.body;
-    const userId = req.user._id;
-
-    // Create submission with Judge0
-    const token = await createSubmission(languageId, sourceCode);
-
-    const submission = await ContestSubmission.create({
-      userId,
-      contestId,
-      problemId,
-      languageId,
-      sourceCode,
-      token,
-    });
-
-    res
-      .status(201)
-      .json({
-        message: "Submission created",
-        submissionId: submission._id,
-        token,
-      });
-  } catch (error) {
-    res.status(500).json({ message: "Failed to submit", error: error.message });
-  }
-};
-
-// GET /contest/:id/leaderboard
-export const getContestLeaderboard = async (req, res) => {
-  try {
-    const contestId = req.params.id;
-
-    // Find all submissions in this contest
-    const submissions = await ContestSubmission.find({ contestId }).populate(
-      "userId"
-    );
-
-    // Count how many unique problems each user solved (status accepted)
-    const userStats = {};
-
-    for (const sub of submissions) {
-      const result = await getSubmissionResult(sub.token);
-      if (result.status && result.status.description === "Accepted") {
-        const uid = sub.userId._id.toString();
-        if (!userStats[uid]) {
-          userStats[uid] = {
-            username: sub.userId.username || sub.userId.email,
-            problemsSolved: new Set(),
-            totalTime: 0, // you can calculate total time based on createdAt etc.
-          };
-        }
-        userStats[uid].problemsSolved.add(sub.problemId.toString());
-      }
-    }
-
-    // Convert to array & count unique problems
-    const leaderboard = Object.values(userStats).map((user) => ({
-      username: user.username,
-      problemsSolved: user.problemsSolved.size,
-      totalTime: user.totalTime,
-    }));
-
-    leaderboard.sort((a, b) => b.problemsSolved - a.problemsSolved);
-
-    res.json(leaderboard);
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch leaderboard", error: error.message });
-  }
-};
-
-// GET /user/contests
 export const getUserContests = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -150,5 +76,140 @@ export const getUserContests = async (req, res) => {
     res
       .status(500)
       .json({ message: "Failed to fetch user contests", error: error.message });
+  }
+};
+export const runCodeInContest = async (req, res) => {
+  try {
+    const { contestId } = req.params;
+    const { problemId, languageId, sourceCode } = req.body;
+    const userId = req.user._id;
+
+    // Fetch problem & visible test cases
+    const problem = await Problem.findById(problemId);
+    if (!problem) return res.status(404).json({ message: "Problem not found" });
+
+    const visibleCases = problem.testcases.filter((tc) => !tc.isHidden);
+
+    // Run on each testcase via Judge0
+    let passedTestCases = [];
+    for (let testcase of visibleCases) {
+      const token = await createSubmission(
+        languageId,
+        sourceCode,
+        testcase.input
+      );
+      const result = await getSubmissionResult(token);
+
+      const actual = (result.stdout || "").trim();
+      const expected = (testcase.output || "").trim();
+      if (actual === expected) passedTestCases.push(testcase._id.toString());
+    }
+
+    res.json({
+      passed: passedTestCases.length,
+      total: visibleCases.length,
+      passedTestCases,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to run code", error: err.message });
+  }
+};
+
+// ✅ /api/contests/:contestId/submit
+export const submitCodeToContest = async (req, res) => {
+  try {
+    const { contestId } = req.params;
+    const { problemId, languageId, sourceCode } = req.body;
+    const userId = req.user._id;
+
+    // Fetch problem & all test cases
+    const problem = await Problem.findById(problemId);
+    if (!problem) return res.status(404).json({ message: "Problem not found" });
+
+    let passedTestCases = [];
+
+    for (let testcase of problem.testcases) {
+      const token = await createSubmission(
+        languageId,
+        sourceCode,
+        testcase.input
+      );
+      const result = await getSubmissionResult(token);
+
+      const actual = (result.stdout || "").trim();
+      const expected = (testcase.output || "").trim();
+      if (actual === expected) passedTestCases.push(testcase._id.toString());
+    }
+
+    const isCorrect = passedTestCases.length === problem.testcases.length;
+
+    // Save submission
+    const submission = await ContestSubmission.create({
+      userId,
+      contestId,
+      problemId,
+      languageId,
+      sourceCode,
+      passedTestCases,
+      isCorrect,
+    });
+
+    res.status(201).json({
+      submissionId: submission._id,
+      passed: passedTestCases.length,
+      total: problem.testcases.length,
+      isCorrect,
+    });
+  } catch (err) {
+    console.error(err);
+    res
+      .status(500)
+      .json({ message: "Failed to submit code", error: err.message });
+  }
+};
+
+// GET /api/contests/:contestId/leaderboard
+export const getContestLeaderboard = async (req, res) => {
+  try {
+    const { contestId } = req.params;
+
+    // Aggregate correct submissions per user
+    const leaderboard = await ContestSubmission.aggregate([
+      {
+        $match: {
+          contestId: new mongoose.Types.ObjectId(contestId),
+          isCorrect: true,
+        },
+      },
+      {
+        $group: {
+          _id: "$userId",
+          solvedCount: { $sum: 1 },
+          lastSubmissionTime: { $max: "$createdAt" },
+        },
+      },
+      { $sort: { solvedCount: -1, lastSubmissionTime: 1 } },
+    ]);
+
+    // Populate usernames
+    const withUsers = await Promise.all(
+      leaderboard.map(async (item) => {
+        const user = await User.findById(item._id, "username");
+        return {
+          userId: item._id,
+          username: user?.username || "Unknown",
+          solvedCount: item.solvedCount,
+          lastSubmissionTime: item.lastSubmissionTime,
+        };
+      })
+    );
+
+    res.json(withUsers);
+  } catch (err) {
+    console.error(err);
+    res
+      .status(500)
+      .json({ message: "Failed to fetch leaderboard", error: err.message });
   }
 };
