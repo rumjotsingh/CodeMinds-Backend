@@ -13,23 +13,39 @@ const submissionSchema = new mongoose.Schema(
       required: true,
     },
     languageId: { type: Number, required: true },
+    language: String, // Optional human-readable
     sourceCode: { type: String, required: true },
-    token: { type: String },
+    token: String,
     result: {
       stdout: String,
       stderr: String,
       time: String,
       memory: Number,
     },
-    status: Object,
-
-    // ✅ New: Whether the submission passed all tests
-    isCorrect: {
-      type: Boolean,
-      default: false,
+    verdict: {
+      type: String,
+      enum: [
+        "Accepted",
+        "Wrong Answer",
+        "Time Limit Exceeded",
+        "Runtime Error",
+        "Compilation Error",
+      ],
     },
-
-    // (Optional) performance benchmarks
+    isCorrect: { type: Boolean, default: false },
+    passedTestCases: { type: Number, default: 0 },
+    totalTestCases: { type: Number, default: 0 },
+    score: { type: Number, default: 0 },
+    testResults: [
+      {
+        input: String,
+        expectedOutput: String,
+        actualOutput: String,
+        passed: Boolean,
+        time: String,
+        memory: Number,
+      },
+    ],
     performance: [
       {
         inputSize: Number,
@@ -37,6 +53,20 @@ const submissionSchema = new mongoose.Schema(
         memory: Number,
       },
     ],
+    testResults: [
+      {
+        input: String,
+        expectedOutput: String,
+        actualOutput: String,
+        passed: Boolean,
+        time: String,
+        memory: Number,
+        isHidden: Boolean,
+      },
+    ],
+    passedTestCases: Number,
+    totalTestCases: Number,
+    verdict: String,
   },
   { timestamps: true }
 );

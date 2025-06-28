@@ -1,122 +1,164 @@
 import Submission from "../models/submission.model.js";
 import {
-  createSubmission,
   getLanguages,
-  getSubmissionResult,
   HEADERS,
   JUDGE0_URL,
 } from "../services/judge0.service.js";
-import Problem from "../models/problem.model.js";
+
 import axios from "axios";
+
+import Problem from "../models/problem.model.js";
+import User from "../models/user.model.js";
+
 export const submitCode = async (req, res) => {
   try {
     const { problemId, languageId, sourceCode } = req.body;
     const userId = req.user._id;
 
-    // Find the problem to get expected output
     const problem = await Problem.findById(problemId);
-    if (!problem) {
-      return res.status(404).json({ message: "Problem not found" });
+    if (!problem) return res.status(404).json({ message: "Problem not found" });
+
+    const testcases = problem.testcases || [];
+    let passed = 0;
+    const testResults = [];
+
+    // 🧪 Run code on each testcase
+    for (const testcase of testcases) {
+      const submissionRes = await axios.post(
+        `${JUDGE0_URL}/submissions?base64_encoded=false&wait=true`,
+        {
+          language_id: languageId,
+          source_code: sourceCode,
+          stdin: testcase.input,
+        },
+        { headers: HEADERS }
+      );
+
+      const result = submissionRes.data;
+      const actual = (result.stdout || "").trim();
+      const expected = (testcase.output || "").trim();
+
+      const isPassed = actual === expected;
+
+      if (isPassed) passed++;
+
+      testResults.push({
+        input: testcase.input,
+        expectedOutput: expected,
+        actualOutput: actual,
+        passed: isPassed,
+        time: result.time,
+        memory: result.memory,
+      });
     }
 
-    // Send code to Judge0 with wait=true so we get the result immediately
-    const submissionRes = await axios.post(
-      `${JUDGE0_URL}/submissions?base64_encoded=false&wait=true`,
-      {
-        language_id: languageId,
-        source_code: sourceCode,
-      },
-      { headers: HEADERS }
-    );
+    const total = testcases.length;
+    const isCorrect = passed === total;
 
-    const result = submissionRes.data;
-    console.log(result);
-
-    // Compare actual stdout with expected output
-    const expected = (problem.expectedOutput || "").trim();
-    const actual = (result.stdout || "").trim();
-    const isCorrect = actual === expected;
-
-    // Save submission to DB
+    // 📝 Save submission
     const submission = await Submission.create({
       userId,
       problemId,
       languageId,
       sourceCode,
-      token: result.token, // Judge0 will still return token even with wait=true
-      status: result.status,
-      result: {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        time: result.time,
-        memory: result.memory,
-      },
+      passedTestCases: passed,
+      totalTestCases: total,
       isCorrect,
+      verdict: isCorrect ? "Accepted" : "Wrong Answer",
+      testResults,
     });
 
-    res.status(201).json({
-      submissionId: submission._id,
-      isCorrect,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      time: result.time,
-      memory: result.memory,
-      status: result.status,
-    });
-  } catch (err) {
-    console.error("❌ Error in submitCode:", err.message);
-    res.status(500).json({ message: "Submission failed", error: err.message });
-  }
-};
-export const getSubmission = async (req, res) => {
-  try {
-    const { submissionId } = req.params;
-
-    const submission = await Submission.findById(submissionId);
-    if (!submission) return res.status(404).json({ message: "Not found" });
-
-    const result = await getSubmissionResult(submission.token);
-
-    // Update submission fields
-    submission.status = result.status;
-    submission.result = {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      time: result.time,
-      memory: result.memory,
-    };
-
-    // ✅ Mark as correct if accepted
-    submission.isCorrect = result.status?.description === "Accepted";
-
-    await submission.save();
-
-    // 🔥 Update user streak/calendar if correct
-    if (submission.isCorrect) {
-      const user = await User.findById(submission.userId);
+    // 🔥 Update streak if all testcases passed
+    if (isCorrect) {
+      const user = await User.findById(userId);
       const today = new Date().toISOString().split("T")[0];
       const yesterday = new Date(Date.now() - 86400000)
         .toISOString()
         .split("T")[0];
       const last = user.lastSolvedDate?.toISOString().split("T")[0];
 
-      if (last === yesterday) {
-        user.streak += 1;
-      } else if (last !== today) {
-        user.streak = 1;
-      }
+      if (last === yesterday) user.streak += 1;
+      else if (last !== today) user.streak = 1;
 
       user.lastSolvedDate = new Date();
-      user.calendar.set(today, true); // assuming `calendar` is a Map
+      if (!user.calendar) user.calendar = new Map();
+      user.calendar.set(today, true);
 
       await user.save();
     }
+
+    res.status(201).json({
+      submissionId: submission._id,
+      isCorrect,
+      passedTestCases: passed,
+      totalTestCases: total,
+      testResults,
+    });
+  } catch (err) {
+    console.error("❌ submitCode error:", err.message);
+    res.status(500).json({ message: "Submission failed", error: err.message });
+  }
+};
+export const runCode = async (req, res) => {
+  try {
+    const { problemId, languageId, sourceCode } = req.body;
+    const problem = await Problem.findById(problemId);
+    if (!problem) return res.status(404).json({ message: "Problem not found" });
+
+    // Filter only visible testcases
+    const visibleTestcases = (problem.testcases || []).filter(
+      (tc) => !tc.isHidden
+    );
+    const testResults = [];
+
+    for (const testcase of visibleTestcases) {
+      const submissionRes = await axios.post(
+        `${JUDGE0_URL}/submissions?base64_encoded=false&wait=true`,
+        {
+          language_id: languageId,
+          source_code: sourceCode,
+          stdin: testcase.input,
+        },
+        { headers: HEADERS }
+      );
+
+      const result = submissionRes.data;
+      const actual = (result.stdout || "").trim();
+      const expected = (testcase.output || "").trim();
+      const isPassed = actual === expected;
+
+      testResults.push({
+        input: testcase.input,
+        expectedOutput: expected,
+        actualOutput: actual,
+        passed: isPassed,
+        time: result.time,
+        memory: result.memory,
+      });
+    }
+
+    res.json({
+      totalTestcases: visibleTestcases.length,
+      passedTestcases: testResults.filter((t) => t.passed).length,
+      testResults,
+    });
+  } catch (err) {
+    console.error("❌ runCode error:", err.message);
+    res.status(500).json({ message: "Run failed", error: err.message });
+  }
+};
+
+export const getSubmission = async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+    const submission = await Submission.findById(submissionId);
+    if (!submission) return res.status(404).json({ message: "Not found" });
 
     res.json(submission);
   } catch (err) {
     res
       .status(500)
-      .json({ message: "Error fetching result", error: err.message });
+      .json({ message: "Error fetching submission", error: err.message });
   }
 };
 

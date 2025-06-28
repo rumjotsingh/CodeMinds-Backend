@@ -1,16 +1,6 @@
 import Problem from "../models/problem.model.js";
 
 // Create Problem
-export const createProblem = async (req, res) => {
-  try {
-    const problem = await Problem.create(req.body);
-    res.status(201).json({ message: "Problem created", problem });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Problem creation failed", details: err.message });
-  }
-};
 
 // Get All Problems
 export const getAllProblems = async (req, res) => {
@@ -34,15 +24,35 @@ export const getProblemById = async (req, res) => {
 };
 
 // Update Problem
-export const updateProblem = async (req, res) => {
+export const createProblem = async (req, res) => {
   try {
-    const updated = await Problem.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-    if (!updated) return res.status(404).json({ message: "Problem not found" });
-    res.status(200).json({ message: "Problem updated", problem: updated });
+    const problem = await Problem.create(req.body);
+    res.status(201).json({ message: "Problem created", problem });
   } catch (err) {
-    res.status(500).json({ error: "Problem update failed" });
+    res
+      .status(500)
+      .json({ error: "Problem creation failed", details: err.message });
+  }
+};
+
+/**
+ * Update an existing problem by ID
+ */
+export const updateProblem = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const updatedProblem = await Problem.findByIdAndUpdate(id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!updatedProblem) {
+      return res.status(404).json({ error: "Problem not found" });
+    }
+    res.json({ message: "Problem updated", updatedProblem });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: "Problem update failed", details: err.message });
   }
 };
 
