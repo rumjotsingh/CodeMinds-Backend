@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "./models/user.model.js";
+import Contest from "./models/contest.model.js";
 
 export const authMiddleware = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -26,4 +27,28 @@ export const isAdmin = (req, res, next) => {
     return res.status(403).json({ message: "Access denied: Admins only" });
   }
   next();
+};
+
+export const checkContestActive = async (req, res, next) => {
+  try {
+    const contestId = req.params.contestId;
+    const contest = await Contest.findById(contestId);
+    if (!contest) return res.status(404).json({ message: "Contest not found" });
+
+    const now = new Date();
+    const istTime = now.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+
+    if (istTime < contest.startTime)
+      return res.status(403).json({ message: "Contest has not started yet" });
+    if (istTime > contest.endTime)
+      return res.status(403).json({ message: "Contest has ended" });
+
+    // all good
+    next();
+  } catch (err) {
+    console.error(err);
+    res
+      .status(500)
+      .json({ message: "Contest check failed", error: err.message });
+  }
 };
