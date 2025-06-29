@@ -7,6 +7,7 @@ import axios from "axios";
 import User from "../models/user.model.js";
 import Problem from "../models/problem.model.js";
 import ContestSubmission from "../models/contestSubmission.model.js";
+import mongoose from "mongoose";
 
 // POST /contest (Admin)
 export const createContest = async (req, res) => {
