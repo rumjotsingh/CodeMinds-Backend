@@ -6,7 +6,7 @@ import submissionModel from "../models/submission.model.js";
 import Submission from "../models/submission.model.js";
 
 import moment from "moment";
-
+import { OAuth2Client } from "google-auth-library";
 export const registerController = async (req, res) => {
   const { name, email, password } = req.body;
 
@@ -90,29 +90,35 @@ export const loginController = async (req, res) => {
     res.status(500).json({ error: "Server error during login" });
   }
 };
-export const GoogleLoginController = async (req, res) => {
-  try {
-    const { email, name, avatar, googleId } = req.body;
 
-    // Basic validation
-    if (!email || !name) {
-      return res
-        .status(400)
-        .json({ message: "Missing required fields: email or name" });
+export const GoogleLoginController = async (req, res) => {
+  const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+  try {
+    const { id_token } = req.body;
+
+    if (!id_token) {
+      return res.status(400).json({ message: "Missing id_token" });
     }
+
+    // Verify token with Google
+    const ticket = await client.verifyIdToken({
+      idToken: id_token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload(); // verified data from Google
+    const { email, name, picture, sub } = payload;
 
     // Check if user already exists
     let user = await User.findOne({ email });
 
-    // If not, create new user
     if (!user) {
       user = new User({
         name,
         email,
-        avatar,
-        googleId, // optional: if you get it from frontend/Auth0
+        avatar: picture,
+        googleId: sub, // Google's unique user ID
       });
-
       await user.save();
     }
 
@@ -141,6 +147,7 @@ export const GoogleLoginController = async (req, res) => {
       .json({ message: "Server error during Google login" });
   }
 };
+
 export const getUserProfile = async (req, res) => {
   try {
     const user = req.user;
