@@ -33,4 +33,8 @@ const contestSubmissionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-export default mongoose.model("ContestSubmission", contestSubmissionSchema);
+const ContestSubmission = mongoose.model(
+  "ContestSubmission",
+  contestSubmissionSchema
+);
+export default ContestSubmission;

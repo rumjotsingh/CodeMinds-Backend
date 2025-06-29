@@ -1,10 +1,7 @@
 import Contest from "../models/contest.model.js";
 import contestSubmissionModel from "../models/contestSubmission.model.js";
-import ContestSubmission from "../models/contestSubmission.model.js";
-import {
-  createSubmission,
-  getSubmissionResult,
-} from "../services/judge0.service.js";
+
+import axios from "axios";
 
 import User from "../models/user.model.js";
 import Problem from "../models/problem.model.js";
@@ -78,91 +75,128 @@ export const getUserContests = async (req, res) => {
       .json({ message: "Failed to fetch user contests", error: error.message });
   }
 };
+// controllers/contestSubmission.controller.js
+
 export const runCodeInContest = async (req, res) => {
-  const { contestId } = req.params;
-  const { problemId, sourceCode, languageId } = req.body;
+  try {
+    const { contestId } = req.params;
+    const { problemId, languageId, sourceCode } = req.body;
 
-  // 1️⃣ Check contest exists
-  const contest = await Contest.findById(contestId).lean();
-  if (!contest) {
-    return res.status(404).json({ message: "Contest not found" });
+    const problem = await Problem.findById(problemId);
+    if (!problem) return res.status(404).json({ message: "Problem not found" });
+
+    const visibleTestcases = (problem.testcases || []).filter(
+      (tc) => !tc.isHidden
+    );
+    const testResults = [];
+
+    for (const testcase of visibleTestcases) {
+      const submissionRes = await axios.post(
+        `${JUDGE0_URL}/submissions?base64_encoded=false&wait=true`,
+        {
+          language_id: languageId,
+          source_code: sourceCode,
+          stdin: testcase.input,
+        },
+        { headers: HEADERS }
+      );
+
+      const result = submissionRes.data;
+      const actual = (result.stdout || "").trim();
+      const expected = (testcase.output || "").trim();
+      const isPassed = actual === expected;
+
+      testResults.push({
+        input: testcase.input,
+        expectedOutput: expected,
+        actualOutput: actual,
+        passed: isPassed,
+        time: result.time,
+        memory: result.memory,
+      });
+    }
+
+    res.json({
+      totalTestcases: visibleTestcases.length,
+      passedTestcases: testResults.filter((t) => t.passed).length,
+      testResults,
+    });
+  } catch (err) {
+    console.error("❌ runCodeInContest error:", err.message);
+    res.status(500).json({ message: "Run failed", error: err.message });
   }
-
-  // 2️⃣ Verify that the problemId is in contest.problems
-  const isValidProblem = contest.problems.some(
-    (p) => p.toString() === problemId
-  );
-  if (!isValidProblem) {
-    return res
-      .status(400)
-      .json({ message: "Problem does not belong to contest" });
-  }
-
-  // 3️⃣ Find problem and pick visible testcase
-  const problem = await Problem.findById(problemId);
-  if (!problem) {
-    return res.status(404).json({ message: "Problem not found" });
-  }
-
-  const visibleTestcase = problem.testcases.find((tc) => !tc.isHidden);
-  if (!visibleTestcase) {
-    return res.status(400).json({ message: "No visible testcase to run" });
-  }
-
-  // 4️⃣ Send to Judge0
-  const token = await createSubmission(
-    languageId,
-    sourceCode,
-    visibleTestcase.input
-  );
-  const result = await getSubmissionResult(token);
-
-  const expected = visibleTestcase.output.trim();
-  const actual = (result.stdout || "").trim();
-  const isCorrect = actual === expected;
-
-  res.json({
-    stdout: result.stdout,
-    stderr: result.stderr,
-    expected,
-    actual,
-    isCorrect,
-    status: result.status,
-  });
 };
 
 export const submitCodeToContest = async (req, res) => {
-  const { contestId } = req.params;
-  const { problemId, sourceCode, languageId } = req.body;
-  const userId = req.user._id;
+  try {
+    const { contestId } = req.params;
+    const { problemId, languageId, sourceCode } = req.body;
+    const userId = req.user._id;
 
-  const problem = await Problem.findById(problemId);
-  if (!problem) return res.status(404).json({ message: "Problem not found" });
+    const problem = await Problem.findById(problemId);
+    if (!problem) return res.status(404).json({ message: "Problem not found" });
 
-  let allPassed = true;
-  let totalScore = 0;
+    const testcases = problem.testcases || [];
+    let passed = 0;
+    const testResults = [];
 
-  for (const tc of problem.testcases) {
-    const token = await createSubmission(languageId, sourceCode, tc.input);
-    const result = await getSubmissionResult(token);
-    const actual = (result.stdout || "").trim();
-    const passed = actual === tc.output.trim();
+    for (const testcase of testcases) {
+      const submissionRes = await axios.post(
+        `${JUDGE0_URL}/submissions?base64_encoded=false&wait=true`,
+        {
+          language_id: languageId,
+          source_code: sourceCode,
+          stdin: testcase.input,
+        },
+        { headers: HEADERS }
+      );
 
-    if (!passed && tc.isHidden) allPassed = false;
-    if (passed) totalScore += 10; // Example: +10 per passed testcase
+      const result = submissionRes.data;
+      const actual = (result.stdout || "").trim();
+      const expected = (testcase.output || "").trim();
+      const isPassed = actual === expected;
+
+      if (isPassed) passed++;
+
+      testResults.push({
+        input: testcase.input,
+        expectedOutput: expected,
+        actualOutput: actual,
+        passed: isPassed,
+        time: result.time,
+        memory: result.memory,
+      });
+    }
+
+    const total = testcases.length;
+    const scorePerTestcase = 100 / total;
+    const totalScore = passed * scorePerTestcase;
+
+    // Save to ContestSubmission
+    await contestSubmissionModel.create({
+      userId,
+      contestId,
+      problemId,
+      languageId,
+      sourceCode,
+      passedTestcases: passed,
+      totalTestcases: total,
+      score: totalScore,
+      testResults,
+    });
+
+    res.status(201).json({
+      message: "Submitted",
+      totalScore,
+      passedAll: passed === total,
+      passedTestcases: passed,
+      totalTestcases: total,
+      testResults,
+    });
+  } catch (err) {
+    console.error("❌ submitCodeToContest error:", err.message);
+    res.status(500).json({ message: "Submit failed", error: err.message });
   }
-
-  await ContestSubmission.create({
-    userId,
-    contestId,
-    problemId,
-    languageId,
-    sourceCode,
-    totalScore,
-    passedAll: allPassed,
-  });
-
-  res.json({ message: "Submitted", totalScore, passedAll: allPassed });
 };
 
 // GET /api/contests/:contestId/leaderboard

@@ -1,10 +1,7 @@
-// controllers/leaderboardController.js
-
-import submissionModel from "../models/submission.model.js";
-
+import Submission from "../models/submission.model";
 export const getLeaderboard = async (req, res) => {
   try {
-    const leaderboard = await submissionModel.aggregate([
+    const leaderboard = await Submission.aggregate([
       // Only correct submissions
       { $match: { isCorrect: true } },
 
