@@ -79,94 +79,90 @@ export const getUserContests = async (req, res) => {
   }
 };
 export const runCodeInContest = async (req, res) => {
-  try {
-    const { contestId } = req.params;
-    const { problemId, languageId, sourceCode } = req.body;
-    const userId = req.user._id;
+  const { contestId } = req.params;
+  const { problemId, sourceCode, languageId } = req.body;
 
-    // Fetch problem & visible test cases
-    const problem = await Problem.findById(problemId);
-    if (!problem) return res.status(404).json({ message: "Problem not found" });
-
-    const visibleCases = problem.testcases.filter((tc) => !tc.isHidden);
-
-    // Run on each testcase via Judge0
-    let passedTestCases = [];
-    for (let testcase of visibleCases) {
-      const token = await createSubmission(
-        languageId,
-        sourceCode,
-        testcase.input
-      );
-      const result = await getSubmissionResult(token);
-
-      const actual = (result.stdout || "").trim();
-      const expected = (testcase.output || "").trim();
-      if (actual === expected) passedTestCases.push(testcase._id.toString());
-    }
-
-    res.json({
-      passed: passedTestCases.length,
-      total: visibleCases.length,
-      passedTestCases,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to run code", error: err.message });
+  // 1️⃣ Check contest exists
+  const contest = await Contest.findById(contestId).lean();
+  if (!contest) {
+    return res.status(404).json({ message: "Contest not found" });
   }
+
+  // 2️⃣ Verify that the problemId is in contest.problems
+  const isValidProblem = contest.problems.some(
+    (p) => p.toString() === problemId
+  );
+  if (!isValidProblem) {
+    return res
+      .status(400)
+      .json({ message: "Problem does not belong to contest" });
+  }
+
+  // 3️⃣ Find problem and pick visible testcase
+  const problem = await Problem.findById(problemId);
+  if (!problem) {
+    return res.status(404).json({ message: "Problem not found" });
+  }
+
+  const visibleTestcase = problem.testcases.find((tc) => !tc.isHidden);
+  if (!visibleTestcase) {
+    return res.status(400).json({ message: "No visible testcase to run" });
+  }
+
+  // 4️⃣ Send to Judge0
+  const token = await createSubmission(
+    languageId,
+    sourceCode,
+    visibleTestcase.input
+  );
+  const result = await getSubmissionResult(token);
+
+  const expected = visibleTestcase.output.trim();
+  const actual = (result.stdout || "").trim();
+  const isCorrect = actual === expected;
+
+  res.json({
+    stdout: result.stdout,
+    stderr: result.stderr,
+    expected,
+    actual,
+    isCorrect,
+    status: result.status,
+  });
 };
 
-// ✅ /api/contests/:contestId/submit
 export const submitCodeToContest = async (req, res) => {
-  try {
-    const { contestId } = req.params;
-    const { problemId, languageId, sourceCode } = req.body;
-    const userId = req.user._id;
+  const { contestId } = req.params;
+  const { problemId, sourceCode, languageId } = req.body;
+  const userId = req.user._id;
 
-    // Fetch problem & all test cases
-    const problem = await Problem.findById(problemId);
-    if (!problem) return res.status(404).json({ message: "Problem not found" });
+  const problem = await Problem.findById(problemId);
+  if (!problem) return res.status(404).json({ message: "Problem not found" });
 
-    let passedTestCases = [];
+  let allPassed = true;
+  let totalScore = 0;
 
-    for (let testcase of problem.testcases) {
-      const token = await createSubmission(
-        languageId,
-        sourceCode,
-        testcase.input
-      );
-      const result = await getSubmissionResult(token);
+  for (const tc of problem.testcases) {
+    const token = await createSubmission(languageId, sourceCode, tc.input);
+    const result = await getSubmissionResult(token);
+    const actual = (result.stdout || "").trim();
+    const passed = actual === tc.output.trim();
 
-      const actual = (result.stdout || "").trim();
-      const expected = (testcase.output || "").trim();
-      if (actual === expected) passedTestCases.push(testcase._id.toString());
-    }
-
-    const isCorrect = passedTestCases.length === problem.testcases.length;
-
-    // Save submission
-    const submission = await ContestSubmission.create({
-      userId,
-      contestId,
-      problemId,
-      languageId,
-      sourceCode,
-      passedTestCases,
-      isCorrect,
-    });
-
-    res.status(201).json({
-      submissionId: submission._id,
-      passed: passedTestCases.length,
-      total: problem.testcases.length,
-      isCorrect,
-    });
-  } catch (err) {
-    console.error(err);
-    res
-      .status(500)
-      .json({ message: "Failed to submit code", error: err.message });
+    if (!passed && tc.isHidden) allPassed = false;
+    if (passed) totalScore += 10; // Example: +10 per passed testcase
   }
+
+  await ContestSubmission.create({
+    userId,
+    contestId,
+    problemId,
+    languageId,
+    sourceCode,
+    totalScore,
+    passedAll: allPassed,
+  });
+
+  res.json({ message: "Submitted", totalScore, passedAll: allPassed });
 };
 
 // GET /api/contests/:contestId/leaderboard
@@ -212,4 +208,11 @@ export const getContestLeaderboard = async (req, res) => {
       .status(500)
       .json({ message: "Failed to fetch leaderboard", error: err.message });
   }
+};
+export const getUserSubmissionsInContest = async (req, res) => {
+  const submissions = await ContestSubmission.find({
+    contestId: req.params.contestId,
+    userId: req.user._id,
+  });
+  res.json(submissions);
 };
