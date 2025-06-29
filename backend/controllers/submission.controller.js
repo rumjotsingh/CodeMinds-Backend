@@ -6,7 +6,7 @@ import {
 } from "../services/judge0.service.js";
 
 import Problem from "../models/problem.model.js";
-import Submission from "../models/submission.model.js";
+
 // controllers/contestSubmission.controller.js
 
 import User from "../models/user.model.js";
