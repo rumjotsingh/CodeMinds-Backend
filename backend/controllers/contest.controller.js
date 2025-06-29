@@ -1,5 +1,6 @@
 import Contest from "../models/contest.model.js";
 import contestSubmissionModel from "../models/contestSubmission.model.js";
+import { HEADERS, JUDGE0_URL } from "../services/judge0.service.js";
 
 import axios from "axios";
 
