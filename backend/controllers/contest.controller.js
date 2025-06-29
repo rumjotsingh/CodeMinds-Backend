@@ -1,10 +1,12 @@
 import Contest from "../models/contest.model.js";
-import contestSubmissionModel from "../models/contestSubmission.model.js";
 
 import axios from "axios";
 
 import User from "../models/user.model.js";
 import Problem from "../models/problem.model.js";
+import { HEADERS, JUDGE0_URL } from "../services/judge0.service.js";
+import ContestSubmission from "../models/contestSubmission.model.js";
+import mongoose from "mongoose";
 
 // POST /contest (Admin)
 export const createContest = async (req, res) => {
@@ -61,9 +63,9 @@ export const getUserContests = async (req, res) => {
     const userId = req.user._id;
 
     // Find distinct contestIds where user has submissions
-    const contests = await contestSubmissionModel
-      .find({ userId })
-      .distinct("contestId");
+    const contests = await ContestSubmission.find({ userId }).distinct(
+      "contestId"
+    );
 
     // Fetch contest details
     const contestDetails = await Contest.find({ _id: { $in: contests } });
@@ -173,7 +175,7 @@ export const submitCodeToContest = async (req, res) => {
     const totalScore = passed * scorePerTestcase;
 
     // Save to ContestSubmission
-    await contestSubmissionModel.create({
+    await ContestSubmission.create({
       userId,
       contestId,
       problemId,
