@@ -13,7 +13,7 @@ import Problem from "../models/problem.model.js";
 import axios from "axios";
 
 
-import { JUDGE0_URL, HEADERS } from "../services/judge0.js";
+
 import contestSubmissionModel from "../models/contestSubmission.model.js";
 
 export const runCodeInContest = async (req, res) => {
