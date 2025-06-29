@@ -1,4 +1,4 @@
-import Submission from "../models/submission.model";
+import Submission from "../models/submission.model.js";
 export const getLeaderboard = async (req, res) => {
   try {
     const leaderboard = await Submission.aggregate([
