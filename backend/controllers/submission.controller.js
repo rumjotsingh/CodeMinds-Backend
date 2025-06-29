@@ -5,7 +5,7 @@ import {
   JUDGE0_URL,
 } from "../services/judge0.service.js";
 
-import axios from "axios";
+
 
 import Problem from "../models/problem.model.js";
 
