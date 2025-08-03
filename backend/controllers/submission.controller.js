@@ -6,6 +6,7 @@ import {
 } from "../services/judge0.service.js";
 
 import Problem from "../models/problem.model.js";
+import axios from "axios";
 
 // controllers/contestSubmission.controller.js
 
