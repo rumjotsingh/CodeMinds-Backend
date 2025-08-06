@@ -15,6 +15,7 @@ router.post("/announcements", authMiddleware, isAdmin, createAnnouncement);
 // Public/User
 router.get("/announcements", authMiddleware, getAnnouncements);
 router.put("/announcements/:id", authMiddleware, isAdmin, updateAnnouncement);
+router.get("/announcements/:id", authMiddleware, isAdmin,getAnnouncements);
 router.delete(
   "/announcements/:id",
   authMiddleware,
