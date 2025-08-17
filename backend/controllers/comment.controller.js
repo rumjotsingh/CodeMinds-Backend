@@ -10,7 +10,6 @@ export const addComment = async (req, res) => {
     if (!content)
       return res.status(400).json({ message: "Comment cannot be empty" });
 
-    // Create comment
     const comment = await Comment.create({ content, problemId, userId });
 
     // Return minimal info, avoid unnecessary population here to save time
