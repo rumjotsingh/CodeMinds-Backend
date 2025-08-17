@@ -75,6 +75,9 @@ export const addProblemToPlaylist = async (req, res) => {
     if (!problemToAdd) {
       return res.status(404).json({ message: "Problem not found" });
     }
+    if (playlist.problems.includes(problemId)) {
+      return res.status(400).json({ message: "Problem already in playlist" });
+    }
 
     if (!playlist.problems.some(p => p.id === problemToAdd.id)) {
       playlist.problems.push(problemToAdd);
