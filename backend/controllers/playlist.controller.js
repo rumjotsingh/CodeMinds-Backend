@@ -1,4 +1,5 @@
 import Playlist from "../models/playlist.model.js";
+import Problem from "../models/problem.model.js";
 
 // ✅ Create new playlist
 export const createPlaylist = async (req, res) => {
@@ -69,8 +70,14 @@ export const addProblemToPlaylist = async (req, res) => {
   const { problemId } = req.body;
   try {
     const playlist = await Playlist.findById(req.params.id);
-    if (!playlist.problems.includes(problemId)) {
-      playlist.problems.push(problemId);
+    const problemToAdd = await Problem.findById(problemId);
+
+    if (!problemToAdd) {
+      return res.status(404).json({ message: "Problem not found" });
+    }
+
+    if (!playlist.problems.some(p => p.id === problemToAdd.id)) {
+      playlist.problems.push(problemToAdd);
       await playlist.save();
     }
     res.json({ message: "Problem added", playlist });
@@ -87,7 +94,7 @@ export const removeProblemFromPlaylist = async (req, res) => {
   try {
     const playlist = await Playlist.findById(req.params.id);
     playlist.problems = playlist.problems.filter(
-      (pid) => pid.toString() !== problemId
+      (p) => p.id.toString() !== problemId
     );
     await playlist.save();
     res.json({ message: "Problem removed", playlist });

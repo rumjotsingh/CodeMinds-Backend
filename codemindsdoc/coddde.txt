@@ -1,0 +1,87 @@
+dataset="curl -X GET \
+     "https://datasets-server.huggingface.co/rows?dataset=greengerong%2Fleetcode&config=default&split=train&offset=0&length=100""
+
+
+
+judgezero=>"https://judge0-ce.p.rapidapi.com" the main server 
+
+
+example for the submission 
+to submit the submission rest is on the judgeZero
+const url = 'https://judge0-ce.p.rapidapi.com/submissions/2e979232-92fd-4012-97cf-3e9177257d10?base64_encoded=true&fields=*';
+const options = {
+	method: 'GET',
+	headers: {
+		'x-rapidapi-key': 'f4d5901063msha56b95c448da8b7p18426fjsn1d71b2c25f4e',
+		'x-rapidapi-host': 'judge0-ce.p.rapidapi.com'
+	}
+};
+
+try {
+	const response = await fetch(url, options);
+	const result = await response.text();
+	console.log(result);
+} catch (error) {
+	console.error(error);
+}
+
+
+ 1. User Authentication APIs:
+Endpoint	Description
+POST /register	Register a new user.
+POST /login	Login (get JWT/token).
+GET /user/profile	Fetch logged-in user profile.
+PUT /user/profile	Update user details/password.
+
+🔹 2. Problem Management APIs (For Admins):
+Endpoint	Description
+POST /problems	Create a new coding problem.
+GET /problems	List all problems (for dashboard).
+GET /problems/:id	Get specific problem detail.
+PUT /problems/:id	Update a problem (Admin).
+DELETE /problems/:id	Delete a problem (Admin).
+
+🔹 3. Problem Solving APIs (For Users):
+Endpoint	Description
+GET /problems	Fetch all available problems.
+GET /problems/:id	Fetch a specific problem detail (title, description, constraints, sample inputs/outputs).
+POST /submissions	Submit a solution (User submits code).
+GET /submissions/:submissionId	Get result of the submission (pass/fail, runtime, memory, output).
+GET /user/submissions	Fetch user’s submission history.
+
+🔹 4. Judge0 API (Online Code Execution — Like LeetCode does internally):
+Judge0 API	Purpose
+POST /submissions	Send code for execution (returns token).
+GET /submissions/:token	Get execution result (using token).
+GET /languages	List all supported languages.
+
+🔹 5. Discussion / Comment APIs (Optional):
+Endpoint	Description
+POST /problems/:id/comments	Add a comment to a problem.
+GET /problems/:id/comments	Fetch comments for a problem.
+
+🔹 6. Contest / Leaderboard APIs (Optional — like LeetCode contests):
+Endpoint	Description
+GET /leaderboard	Fetch top scorers (contest/overall).
+POST /contest/submit	Submit contest problem solution.
+
+
+✅ In Short: Minimum APIs for LeetCode Clone:
+User APIs — Register, Login, Profile
+
+Problem APIs — CRUD Problems
+
+Submission APIs — Submit, Get Result
+
+Judge0 APIs — Code execution
+
+Optional: Discussion, Leaderboard APIs
+
+
+
+
+1071973874567-kmak1teg0umidir0jj9s6dr01n68p3ih.apps.googleusercontent.com->cliinetId
+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->ClinetSecret
+
+
+

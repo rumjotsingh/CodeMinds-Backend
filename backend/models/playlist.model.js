@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import Problem from "./problem.model.js";
 
 const playlistSchema = new mongoose.Schema(
   {
@@ -16,10 +17,7 @@ const playlistSchema = new mongoose.Schema(
       type: String,
     },
     problems: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Problem",
-      },
+      Problem.schema
     ],
     isPublic: {
       type: Boolean,
