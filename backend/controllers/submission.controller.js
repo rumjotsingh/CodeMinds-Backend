@@ -170,6 +170,27 @@ export const getUserSubmissions = async (req, res) => {
   });
   res.json(submissions);
 };
+
+export const getProblemSubmissions = async (req, res) => {
+  try {
+    const { problemId } = req.params;
+    const userId = req.user._id;
+
+    // Get all submissions for this specific problem by the current user
+    const submissions = await Submission.find({ 
+      problemId, 
+      userId 
+    }).sort({
+      createdAt: -1,
+    });
+
+    res.json(submissions);
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Error fetching problem submissions", error: err.message });
+  }
+};
 // controllers/languageController.js
 
 export const getLanguagesController = async (req, res) => {

@@ -4,6 +4,7 @@ import {
   runCode, // <-- ✅ new controller
   getSubmission,
   getUserSubmissions,
+  getProblemSubmissions,
   getLanguagesController,
 } from "../controllers/submission.controller.js";
 import { authMiddleware } from "../middleware.js";
@@ -21,6 +22,9 @@ router.get("/submissions/:submissionId", authMiddleware, getSubmission);
 
 // 📜 Get all submissions by the logged-in user
 router.get("/user/submissions", authMiddleware, getUserSubmissions);
+
+// 📋 Get submissions for a specific problem by the logged-in user
+router.get("/submissions/problem/:problemId", authMiddleware, getProblemSubmissions);
 
 // 🔧 Judge0 languages list
 router.get("/judge0/languages", getLanguagesController);
