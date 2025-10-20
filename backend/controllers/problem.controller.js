@@ -105,36 +105,27 @@ export const deleteProblem = async (req, res) => {
 };
 export const getProblemsByTags = async (req, res) => {
   try {
-    console.log("heloo");
     const { tags, difficulty } = req.query;
 
-    if (!tags || tags.trim() === "") {
-      return res
-        .status(400)
-        .json({ message: "Tags query parameter is required" });
+    const query = {};
+
+    if (tags && tags.trim() !== "") {
+      const tagArray = tags.split(",").map((tag) => tag.trim());
+      query.tags = { $in: tagArray.map((tag) => new RegExp(`^${tag}$`, "i")) };
     }
 
-    const tagArray = tags.split(",").map((tag) => tag.trim());
-
-    // Build query conditions
-    const query = {
-      tags: { $in: tagArray.map((tag) => new RegExp(`^${tag}$`, "i")) },
-    };
-
-    // Add difficulty filter if provided
-    if (difficulty) {
+    if (difficulty && difficulty.trim() !== "") {
       const difficultyArray = difficulty
         .split(",")
         .map((d) => d.trim().toUpperCase())
         .filter((d) => ["EASY", "MEDIUM", "HARD"].includes(d));
-
       if (difficultyArray.length > 0) {
         query.difficulty = { $in: difficultyArray };
       }
     }
 
+    // If no filters, return all problems
     const problems = await Problem.find(query).sort({ createdAt: -1 });
-
     res.status(200).json(problems);
   } catch (error) {
     console.error("❌ Error fetching problems by tags:", error);

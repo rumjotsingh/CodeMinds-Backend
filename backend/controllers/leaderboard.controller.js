@@ -1,51 +1,40 @@
 import Submission from "../models/submission.model.js";
 export const getLeaderboard = async (req, res) => {
   try {
-    const leaderboard = await Submission.aggregate([
-      // Only correct submissions
+    // Get all users
+    const users = await (
+      await import("../models/user.model.js")
+    ).default.find(
+      {},
+      {
+        _id: 1,
+        name: 1,
+        email: 1,
+      }
+    );
+
+    // Get solved counts for each user
+    const solvedCounts = await Submission.aggregate([
       { $match: { isCorrect: true } },
-
-      // Group by userId and problemId to ensure unique problem solves
-      {
-        $group: {
-          _id: { userId: "$userId", problemId: "$problemId" },
-        },
-      },
-
-      // Re-group by userId to count how many unique problems they solved
-      {
-        $group: {
-          _id: "$_id.userId",
-          problemsSolved: { $sum: 1 },
-        },
-      },
-
-      // Sort by most solved
-      { $sort: { problemsSolved: -1 } },
-
-      // Join with user collection
-      {
-        $lookup: {
-          from: "users",
-          localField: "_id",
-          foreignField: "_id",
-          as: "user",
-        },
-      },
-
-      { $unwind: "$user" },
-
-      // Project desired fields
-      {
-        $project: {
-          _id: 0,
-          userId: "$user._id",
-          name: "$user.name",
-          email: "$user.email",
-          problemsSolved: 1,
-        },
-      },
+      { $group: { _id: { userId: "$userId", problemId: "$problemId" } } },
+      { $group: { _id: "$_id.userId", problemsSolved: { $sum: 1 } } },
     ]);
+
+    // Map userId to problemsSolved
+    const solvedMap = new Map();
+    solvedCounts.forEach((row) => {
+      solvedMap.set(String(row._id), row.problemsSolved);
+    });
+
+    // Build leaderboard: all users, solved count or 0
+    const leaderboard = users
+      .map((user) => ({
+        userId: user._id,
+        name: user.name,
+        email: user.email,
+        problemsSolved: solvedMap.get(String(user._id)) || 0,
+      }))
+      .sort((a, b) => b.problemsSolved - a.problemsSolved);
 
     res.json(leaderboard);
   } catch (err) {
