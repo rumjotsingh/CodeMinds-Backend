@@ -7,6 +7,8 @@ import {
   deleteProblem,
   getProblemsByTags,
   getAllTags,
+  getGroupedTags,
+  getProblemsByCategories,
 } from "../controllers/problem.controller.js";
 import { authMiddleware, isAdmin } from "../middleware.js";
 
@@ -16,6 +18,8 @@ const router = express.Router();
 router.get("/problems", getAllProblems);
 router.get("/problems/by-tags", getProblemsByTags);
 router.get("/problems/tags", getAllTags);
+router.get("/problems/tags/grouped", getGroupedTags);
+router.get("/problems/filter", getProblemsByCategories);
 
 router.get("/problems/:id", getProblemById); // ❗ Place dynamic last
 // Okay here or top

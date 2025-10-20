@@ -31,12 +31,12 @@ async function main() {
 app.listen(process.env.PORT, (req, res) => {
   console.log("the sever is listening up port ", process.env.PORT);
 });
-app.use("/api/v1", UserRoutes);
-app.use("/api/v1", problemRoute);
-app.use("/api/v1", submissionRoutes);
-app.use("/api/v1", commentRoutes);
+  app.use("/api/v1", UserRoutes);
+  app.use("/api/v1", problemRoute);
+  app.use("/api/v1", submissionRoutes);
+  app.use("/api/v1", commentRoutes);
 
-app.use("/api/v1", announcementRoutes);
-app.use("/api/v1", leaderboardRoutes);
-app.use("/api/v1", playlistRoutes);
-app.use("/api/v1", contestRoutes);
+  app.use("/api/v1", announcementRoutes);
+  app.use("/api/v1", leaderboardRoutes);
+  app.use("/api/v1", playlistRoutes);
+  app.use("/api/v1", contestRoutes);

@@ -104,3 +104,150 @@ export const getAllTags = async (req, res) => {
       .json({ message: "Failed to fetch tags", error: err.message });
   }
 };
+
+/**
+ * Group all distinct tags into categories: companies, dataStructures, algorithms, topics
+ */
+export const getGroupedTags = async (req, res) => {
+  try {
+    const distinctTags = await Problem.distinct("tags");
+
+    // Define known sets (normalized to lowercase for comparison)
+    const companiesSet = new Set([
+      "google",
+      "amazon",
+      "microsoft",
+      "facebook",
+      "meta",
+      "apple",
+      "netflix",
+      "uber",
+      "airbnb",
+      "bloomberg",
+      "goldman sachs",
+      "jp morgan",
+      "jpmorgan",
+      "adobe",
+      "oracle",
+      "cisco",
+      "vm ware",
+      "vmware",
+      "tcs",
+      "infosys",
+    ]);
+    const dataStructuresSet = new Set([
+      "array",
+      "string",
+      "linked list",
+      "stack",
+      "queue",
+      "heap",
+      "priority queue",
+      "hash table",
+      "hashmap",
+      "set",
+      "tree",
+      "binary tree",
+      "bst",
+      "trie",
+      "graph",
+      "matrix",
+      "bit manipulation",
+    ]);
+    const algorithmsSet = new Set([
+      "two pointers",
+      "greedy",
+      "dynamic programming",
+      "binary search",
+      "dfs",
+      "bfs",
+      "backtracking",
+      "divide and conquer",
+      "sliding window",
+      "kadane’s algorithm",
+      "kadane's algorithm",
+      "sorting",
+      "recursion",
+      "binary exponentiation",
+    ]);
+
+    const grouped = {
+      companies: [],
+      dataStructures: [],
+      algorithms: [],
+      topics: [], // everything else
+    };
+
+    for (const tag of distinctTags) {
+      const norm = String(tag).toLowerCase();
+      if (companiesSet.has(norm)) grouped.companies.push(tag);
+      else if (dataStructuresSet.has(norm)) grouped.dataStructures.push(tag);
+      else if (algorithmsSet.has(norm)) grouped.algorithms.push(tag);
+      else grouped.topics.push(tag);
+    }
+
+    // Sort for stable output
+    grouped.companies.sort((a, b) => a.localeCompare(b));
+    grouped.dataStructures.sort((a, b) => a.localeCompare(b));
+    grouped.algorithms.sort((a, b) => a.localeCompare(b));
+    grouped.topics.sort((a, b) => a.localeCompare(b));
+
+    res.status(200).json(grouped);
+  } catch (err) {
+    console.error("Error grouping tags:", err);
+    res
+      .status(500)
+      .json({ message: "Failed to group tags", error: err.message });
+  }
+};
+
+/**
+ * Filter problems by category-based tags.
+ * AND across categories, OR within the same category.
+ * Query params:
+ *  - companies: comma-separated list
+ *  - dataStructures: comma-separated list
+ *  - algorithms: comma-separated list
+ * Example: /problems/filter?companies=Google,Amazon&algorithms=Greedy
+ */
+export const getProblemsByCategories = async (req, res) => {
+  try {
+    const { companies, dataStructures, algorithms } = req.query;
+
+    const conditions = [];
+    const buildRegexArray = (csv) =>
+      String(csv)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((t) => new RegExp(`^${t}$`, "i"));
+
+    if (companies) {
+      conditions.push({ tags: { $in: buildRegexArray(companies) } });
+    }
+    if (dataStructures) {
+      conditions.push({ tags: { $in: buildRegexArray(dataStructures) } });
+    }
+    if (algorithms) {
+      conditions.push({ tags: { $in: buildRegexArray(algorithms) } });
+    }
+
+    if (conditions.length === 0) {
+      return res.status(400).json({
+        message:
+          "Provide at least one of: companies, dataStructures, algorithms",
+      });
+    }
+
+    const query =
+      conditions.length === 1 ? conditions[0] : { $and: conditions };
+    const problems = await Problem.find(query).sort({ createdAt: -1 });
+    res.status(200).json(problems);
+  } catch (err) {
+    console.error("Error fetching problems by categories:", err);
+    res.status(500).json({
+      message: "Failed to fetch problems by categories",
+      error: err.message,
+    });
+  }
+};

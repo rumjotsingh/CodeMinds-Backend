@@ -20,7 +20,8 @@ const codeSnippetSchema = new mongoose.Schema({
   GO: String,
 });
 
-const problemSchema = new mongoose.Schema({
+const problemSchema = new mongoose.Schema(
+  {
   title: { type: String, required: true },
   description: { type: String, required: true }, // markdown
   difficulty: {
@@ -36,7 +37,12 @@ const problemSchema = new mongoose.Schema({
   editorial: { type: String }, // markdown
   codeSnippets: codeSnippetSchema, // starter code for user
   referenceSolutions: codeSnippetSchema, // hidden correct solutions
-});
+  },
+  { timestamps: true }
+);
+
+// Index for faster tag lookups
+problemSchema.index({ tags: 1 });
 
 // optional: add pre-save hook to auto-update updatedAt
 
