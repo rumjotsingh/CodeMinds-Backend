@@ -69,7 +69,7 @@ export const deleteProblem = async (req, res) => {
 export const getProblemsByTags = async (req, res) => {
   try {
     console.log("heloo");
-    const { tags } = req.query;
+    const { tags, difficulty } = req.query;
 
     if (!tags || tags.trim() === "") {
       return res
@@ -79,9 +79,24 @@ export const getProblemsByTags = async (req, res) => {
 
     const tagArray = tags.split(",").map((tag) => tag.trim());
 
-    const problems = await Problem.find({
+    // Build query conditions
+    const query = {
       tags: { $in: tagArray.map((tag) => new RegExp(`^${tag}$`, "i")) },
-    });
+    };
+
+    // Add difficulty filter if provided
+    if (difficulty) {
+      const difficultyArray = difficulty
+        .split(",")
+        .map((d) => d.trim().toUpperCase())
+        .filter((d) => ["EASY", "MEDIUM", "HARD"].includes(d));
+
+      if (difficultyArray.length > 0) {
+        query.difficulty = { $in: difficultyArray };
+      }
+    }
+
+    const problems = await Problem.find(query).sort({ createdAt: -1 });
 
     res.status(200).json(problems);
   } catch (error) {
@@ -208,11 +223,12 @@ export const getGroupedTags = async (req, res) => {
  *  - companies: comma-separated list
  *  - dataStructures: comma-separated list
  *  - algorithms: comma-separated list
- * Example: /problems/filter?companies=Google,Amazon&algorithms=Greedy
+ *  - difficulty: comma-separated list (EASY, MEDIUM, HARD)
+ * Example: /problems/filter?companies=Google,Amazon&algorithms=Greedy&difficulty=EASY,MEDIUM
  */
 export const getProblemsByCategories = async (req, res) => {
   try {
-    const { companies, dataStructures, algorithms } = req.query;
+    const { companies, dataStructures, algorithms, difficulty } = req.query;
 
     const conditions = [];
     const buildRegexArray = (csv) =>
@@ -241,6 +257,19 @@ export const getProblemsByCategories = async (req, res) => {
 
     const query =
       conditions.length === 1 ? conditions[0] : { $and: conditions };
+
+    // Add difficulty filter if provided
+    if (difficulty) {
+      const difficultyArray = difficulty
+        .split(",")
+        .map((d) => d.trim().toUpperCase())
+        .filter((d) => ["EASY", "MEDIUM", "HARD"].includes(d));
+
+      if (difficultyArray.length > 0) {
+        query.difficulty = { $in: difficultyArray };
+      }
+    }
+
     const problems = await Problem.find(query).sort({ createdAt: -1 });
     res.status(200).json(problems);
   } catch (err) {
