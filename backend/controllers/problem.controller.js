@@ -1,4 +1,5 @@
 import Problem from "../models/problem.model.js";
+import Submission from "../models/submission.model.js";
 
 // Create Problem
 
@@ -6,6 +7,24 @@ import Problem from "../models/problem.model.js";
 export const getAllProblems = async (req, res) => {
   try {
     const problems = await Problem.find().sort({ createdAt: -1 });
+
+    // If user is authenticated, add solved status
+    if (req.user) {
+      const userId = req.user._id;
+      const solvedProblemIds = await Submission.distinct("problemId", {
+        userId,
+        isCorrect: true,
+        verdict: "Accepted",
+      });
+
+      const problemsWithStatus = problems.map((problem) => ({
+        ...problem.toObject(),
+        solved: solvedProblemIds.some((id) => id.equals(problem._id)),
+      }));
+
+      return res.status(200).json(problemsWithStatus);
+    }
+
     res.status(200).json(problems);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch problems" });
@@ -17,6 +36,24 @@ export const getProblemById = async (req, res) => {
   try {
     const problem = await Problem.findById(req.params.id);
     if (!problem) return res.status(404).json({ message: "Problem not found" });
+
+    // If user is authenticated, add solved status
+    if (req.user) {
+      const userId = req.user._id;
+      const solvedSubmission = await Submission.findOne({
+        problemId: req.params.id,
+        userId,
+        isCorrect: true,
+        verdict: "Accepted",
+      });
+
+      return res.status(200).json({
+        ...problem.toObject(),
+        solved: !!solvedSubmission,
+        solvedAt: solvedSubmission?.createdAt,
+      });
+    }
+
     res.status(200).json(problem);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch problem" });
@@ -117,6 +154,65 @@ export const getAllTags = async (req, res) => {
     res
       .status(500)
       .json({ message: "Failed to fetch tags", error: err.message });
+  }
+};
+
+/**
+ * Global search across problems
+ * Searches in: title, description, tags, difficulty
+ * Query params:
+ *  - q: search query string (required)
+ *  - difficulty: filter by difficulty (optional)
+ * Example: /problems/search?q=array&difficulty=EASY
+ */
+export const searchProblems = async (req, res) => {
+  try {
+    const { q, difficulty } = req.query;
+
+    if (!q || q.trim() === "") {
+      return res.status(400).json({
+        message: "Search query parameter 'q' is required",
+      });
+    }
+
+    const searchTerm = q.trim();
+    const searchRegex = new RegExp(searchTerm, "i"); // case-insensitive
+
+    // Build search conditions (OR across fields)
+    const searchConditions = [
+      { title: searchRegex },
+      { description: searchRegex },
+      { tags: searchRegex },
+      { difficulty: searchRegex },
+    ];
+
+    const query = { $or: searchConditions };
+
+    // Add difficulty filter if provided
+    if (difficulty) {
+      const difficultyArray = difficulty
+        .split(",")
+        .map((d) => d.trim().toUpperCase())
+        .filter((d) => ["EASY", "MEDIUM", "HARD"].includes(d));
+
+      if (difficultyArray.length > 0) {
+        query.difficulty = { $in: difficultyArray };
+      }
+    }
+
+    const problems = await Problem.find(query).sort({ createdAt: -1 });
+
+    res.status(200).json({
+      count: problems.length,
+      searchTerm: searchTerm,
+      results: problems,
+    });
+  } catch (err) {
+    console.error("Error in global search:", err);
+    res.status(500).json({
+      message: "Failed to search problems",
+      error: err.message,
+    });
   }
 };
 

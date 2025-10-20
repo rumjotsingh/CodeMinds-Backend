@@ -22,6 +22,29 @@ export const authMiddleware = async (req, res, next) => {
     return res.status(401).json({ message: "Invalid token" });
   }
 };
+
+// Optional auth - attaches user if token exists, but doesn't require it
+export const optionalAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    req.user = null;
+    return next();
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.userId).select("-password");
+    req.user = user || null;
+  } catch (error) {
+    req.user = null;
+  }
+
+  next();
+};
+
 export const isAdmin = (req, res, next) => {
   if (req.user.role !== "admin") {
     return res.status(403).json({ message: "Access denied: Admins only" });

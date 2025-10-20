@@ -9,19 +9,21 @@ import {
   getAllTags,
   getGroupedTags,
   getProblemsByCategories,
+  searchProblems,
 } from "../controllers/problem.controller.js";
-import { authMiddleware, isAdmin } from "../middleware.js";
+import { authMiddleware, isAdmin, optionalAuth } from "../middleware.js";
 
 const router = express.Router();
 
-// Public or Admin Dashboard
-router.get("/problems", getAllProblems);
-router.get("/problems/by-tags", getProblemsByTags);
+// Public or Admin Dashboard (with optional auth to show solved status)
+router.get("/problems", optionalAuth, getAllProblems);
+router.get("/problems/search", optionalAuth, searchProblems);
+router.get("/problems/by-tags", optionalAuth, getProblemsByTags);
 router.get("/problems/tags", getAllTags);
 router.get("/problems/tags/grouped", getGroupedTags);
-router.get("/problems/filter", getProblemsByCategories);
+router.get("/problems/filter", optionalAuth, getProblemsByCategories);
 
-router.get("/problems/:id", getProblemById); // ❗ Place dynamic last
+router.get("/problems/:id", optionalAuth, getProblemById); // ❗ Place dynamic last
 // Okay here or top
 
 // Admin only

@@ -177,9 +177,9 @@ export const getProblemSubmissions = async (req, res) => {
     const userId = req.user._id;
 
     // Get all submissions for this specific problem by the current user
-    const submissions = await Submission.find({ 
-      problemId, 
-      userId 
+    const submissions = await Submission.find({
+      problemId,
+      userId,
     }).sort({
       createdAt: -1,
     });
@@ -188,9 +188,190 @@ export const getProblemSubmissions = async (req, res) => {
   } catch (err) {
     res
       .status(500)
-      .json({ message: "Error fetching problem submissions", error: err.message });
+      .json({
+        message: "Error fetching problem submissions",
+        error: err.message,
+      });
   }
 };
+
+/**
+ * Check if user has solved a specific problem
+ * Returns solved status and submission details
+ */
+export const checkProblemSolved = async (req, res) => {
+  try {
+    const { problemId } = req.params;
+    const userId = req.user._id;
+
+    // Check if user has any accepted submission for this problem
+    const solvedSubmission = await Submission.findOne({
+      problemId,
+      userId,
+      isCorrect: true,
+      verdict: "Accepted",
+    }).sort({ createdAt: 1 }); // Get the first accepted submission
+
+    if (solvedSubmission) {
+      return res.json({
+        solved: true,
+        solvedAt: solvedSubmission.createdAt,
+        submissionId: solvedSubmission._id,
+        language: solvedSubmission.language,
+        passedTestCases: solvedSubmission.passedTestCases,
+        totalTestCases: solvedSubmission.totalTestCases,
+      });
+    }
+
+    res.json({
+      solved: false,
+      message: "Problem not solved yet",
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Error checking problem status",
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * Get all solved problems for the current user
+ */
+export const getSolvedProblems = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Get unique problem IDs that user has solved
+    const solvedSubmissions = await Submission.aggregate([
+      {
+        $match: {
+          userId: userId,
+          isCorrect: true,
+          verdict: "Accepted",
+        },
+      },
+      {
+        $group: {
+          _id: "$problemId",
+          firstSolvedAt: { $min: "$createdAt" },
+          totalAttempts: { $sum: 1 },
+          lastSubmission: { $max: "$createdAt" },
+        },
+      },
+      {
+        $lookup: {
+          from: "problems",
+          localField: "_id",
+          foreignField: "_id",
+          as: "problem",
+        },
+      },
+      {
+        $unwind: "$problem",
+      },
+      {
+        $project: {
+          problemId: "$_id",
+          title: "$problem.title",
+          difficulty: "$problem.difficulty",
+          tags: "$problem.tags",
+          firstSolvedAt: 1,
+          totalAttempts: 1,
+          lastSubmission: 1,
+        },
+      },
+      {
+        $sort: { firstSolvedAt: -1 },
+      },
+    ]);
+
+    res.json({
+      totalSolved: solvedSubmissions.length,
+      problems: solvedSubmissions,
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Error fetching solved problems",
+      error: err.message,
+    });
+  }
+};
+
+/**
+ * Get user's problem-solving statistics
+ */
+export const getUserStats = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Count solved problems by difficulty
+    const stats = await Submission.aggregate([
+      {
+        $match: {
+          userId: userId,
+          isCorrect: true,
+          verdict: "Accepted",
+        },
+      },
+      {
+        $group: {
+          _id: "$problemId",
+        },
+      },
+      {
+        $lookup: {
+          from: "problems",
+          localField: "_id",
+          foreignField: "_id",
+          as: "problem",
+        },
+      },
+      {
+        $unwind: "$problem",
+      },
+      {
+        $group: {
+          _id: "$problem.difficulty",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Format stats
+    const formattedStats = {
+      totalSolved: 0,
+      easy: 0,
+      medium: 0,
+      hard: 0,
+    };
+
+    stats.forEach((stat) => {
+      const difficulty = stat._id.toLowerCase();
+      formattedStats[difficulty] = stat.count;
+      formattedStats.totalSolved += stat.count;
+    });
+
+    // Get total attempts
+    const totalAttempts = await Submission.countDocuments({ userId });
+
+    // Get user info
+    const user = await User.findById(userId);
+
+    res.json({
+      ...formattedStats,
+      totalAttempts,
+      streak: user.streak || 0,
+      lastSolvedDate: user.lastSolvedDate,
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Error fetching user stats",
+      error: err.message,
+    });
+  }
+};
+
 // controllers/languageController.js
 
 export const getLanguagesController = async (req, res) => {
