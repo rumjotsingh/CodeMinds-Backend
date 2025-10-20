@@ -22,21 +22,21 @@ const codeSnippetSchema = new mongoose.Schema({
 
 const problemSchema = new mongoose.Schema(
   {
-  title: { type: String, required: true },
-  description: { type: String, required: true }, // markdown
-  difficulty: {
-    type: String,
-    enum: ["EASY", "MEDIUM", "HARD"],
-    required: true,
-  },
-  tags: [String],
-  constraints: [String],
-  examples: [exampleSchema],
-  testcases: [testcaseSchema],
-  hints: [String],
-  editorial: { type: String }, // markdown
-  codeSnippets: codeSnippetSchema, // starter code for user
-  referenceSolutions: codeSnippetSchema, // hidden correct solutions
+    title: { type: String, required: true },
+    description: { type: String, required: true }, // markdown
+    difficulty: {
+      type: String,
+      enum: ["EASY", "MEDIUM", "HARD"],
+      required: true,
+    },
+    tags: [String],
+    constraints: [String],
+    examples: [exampleSchema],
+    testcases: [testcaseSchema],
+    hints: [String],
+    editorial: { type: String }, // markdown
+    codeSnippets: codeSnippetSchema, // starter code for user
+    referenceSolutions: codeSnippetSchema, // hidden correct solutions
   },
   { timestamps: true }
 );
