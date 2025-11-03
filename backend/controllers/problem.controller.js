@@ -104,16 +104,23 @@ export const getAllProblems = async (req, res) => {
 };
 
 // 🚀 BLAZING FAST: Get Problem by ID with optimized lookup
+import mongoose from "mongoose";
+import Problem from "../models/problem.model.js";
+
 export const getProblemById = async (req, res) => {
   try {
     const problemId = req.params.id;
 
-    // 🚀 Optimized aggregation for authenticated users
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(problemId)) {
+      return res.status(400).json({ message: "Invalid problem ID" });
+    }
+
     if (req.user) {
       const userId = req.user._id;
 
       const pipeline = [
-        { $match: { _id: problemId } },
+        { $match: { _id: new mongoose.Types.ObjectId(problemId) } },
         {
           $lookup: {
             from: "submissions",
@@ -143,9 +150,7 @@ export const getProblemById = async (req, res) => {
             let: { problemId: "$_id" },
             pipeline: [
               {
-                $match: {
-                  $expr: { $eq: ["$problemId", "$$problemId"] },
-                },
+                $match: { $expr: { $eq: ["$problemId", "$$problemId"] } },
               },
               {
                 $group: {
@@ -198,7 +203,7 @@ export const getProblemById = async (req, res) => {
       return res.status(200).json(problem);
     }
 
-    // 🚀 Optimized query for public access
+    // ✅ For unauthenticated users
     const problem = await Problem.findById(problemId)
       .select("-testCases.hiddenTestCases")
       .lean();
@@ -213,7 +218,7 @@ export const getProblemById = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch problem" });
   }
 };
-
+``;
 // Update Problem
 export const createProblem = async (req, res) => {
   try {
