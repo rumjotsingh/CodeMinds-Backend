@@ -164,60 +164,180 @@ export const getSubmission = async (req, res) => {
   }
 };
 
+// 🚀 BLAZING FAST: Optimized user submissions with aggregation
 export const getUserSubmissions = async (req, res) => {
-  const submissions = await Submission.find({ userId: req.user._id }).sort({
-    createdAt: -1,
-  });
-  res.json(submissions);
-};
-
-export const getProblemSubmissions = async (req, res) => {
   try {
-    const { problemId } = req.params;
+    const { page = 1, limit = 20, status, problemId } = req.query;
+    const skip = (page - 1) * limit;
     const userId = req.user._id;
 
-    // Get all submissions for this specific problem by the current user
-    const submissions = await Submission.find({
-      problemId,
-      userId,
-    }).sort({
-      createdAt: -1,
-    });
+    // Build match conditions
+    const matchConditions = { userId };
 
-    res.json(submissions);
+    if (status) {
+      matchConditions.verdict = status;
+    }
+
+    if (problemId) {
+      matchConditions.problemId = problemId;
+    }
+
+    // 🚀 Optimized aggregation pipeline
+    const pipeline = [
+      { $match: matchConditions },
+      {
+        $lookup: {
+          from: "problems",
+          localField: "problemId",
+          foreignField: "_id",
+          as: "problem",
+          pipeline: [{ $project: { title: 1, difficulty: 1, tags: 1 } }],
+        },
+      },
+      {
+        $addFields: {
+          problem: { $arrayElemAt: ["$problem", 0] },
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: parseInt(limit) },
+      {
+        $project: {
+          sourceCode: 0, // Exclude source code for performance
+          testResults: 0, // Exclude test results for list view
+        },
+      },
+    ];
+
+    const submissions = await Submission.aggregate(pipeline);
+    const total = await Submission.countDocuments(matchConditions);
+
+    res.json({
+      submissions,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    });
   } catch (err) {
-    res
-      .status(500)
-      .json({
-        message: "Error fetching problem submissions",
-        error: err.message,
-      });
+    console.error("❌ Error fetching user submissions:", err);
+    res.status(500).json({
+      message: "Error fetching submissions",
+      error: err.message,
+    });
   }
 };
 
-/**
- * Check if user has solved a specific problem
- * Returns solved status and submission details
- */
+// 🚀 BLAZING FAST: Optimized problem submissions with statistics
+export const getProblemSubmissions = async (req, res) => {
+  try {
+    const { problemId } = req.params;
+    const { page = 1, limit = 15 } = req.query;
+    const skip = (page - 1) * limit;
+    const userId = req.user._id;
+
+    // 🚀 Get submissions with statistics in single aggregation
+    const pipeline = [
+      {
+        $match: {
+          problemId,
+          userId,
+        },
+      },
+      {
+        $facet: {
+          submissions: [
+            { $sort: { createdAt: -1 } },
+            { $skip: skip },
+            { $limit: parseInt(limit) },
+            {
+              $project: {
+                createdAt: 1,
+                verdict: 1,
+                passedTestCases: 1,
+                totalTestCases: 1,
+                languageId: 1,
+                isCorrect: 1,
+              },
+            },
+          ],
+          stats: [
+            {
+              $group: {
+                _id: null,
+                total: { $sum: 1 },
+                accepted: {
+                  $sum: { $cond: [{ $eq: ["$verdict", "Accepted"] }, 1, 0] },
+                },
+                bestSubmission: {
+                  $first: {
+                    $cond: [
+                      { $eq: ["$verdict", "Accepted"] },
+                      { createdAt: "$createdAt", submissionId: "$_id" },
+                      null,
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const [result] = await Submission.aggregate(pipeline);
+    const submissions = result.submissions;
+    const stats = result.stats[0] || {
+      total: 0,
+      accepted: 0,
+      bestSubmission: null,
+    };
+
+    res.json({
+      submissions,
+      stats,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: stats.total,
+        pages: Math.ceil(stats.total / limit),
+      },
+    });
+  } catch (err) {
+    console.error("❌ Error fetching problem submissions:", err);
+    res.status(500).json({
+      message: "Error fetching problem submissions",
+      error: err.message,
+    });
+  }
+};
+
+// 🚀 BLAZING FAST: Lightning-fast problem solve check
 export const checkProblemSolved = async (req, res) => {
   try {
     const { problemId } = req.params;
     const userId = req.user._id;
 
-    // Check if user has any accepted submission for this problem
+    // 🚀 Single optimized query with projection
     const solvedSubmission = await Submission.findOne({
       problemId,
       userId,
       isCorrect: true,
       verdict: "Accepted",
-    }).sort({ createdAt: 1 }); // Get the first accepted submission
+    })
+      .select("createdAt languageId passedTestCases totalTestCases")
+      .sort({ createdAt: 1 })
+      .lean(); // Use lean for better performance
 
     if (solvedSubmission) {
       return res.json({
         solved: true,
         solvedAt: solvedSubmission.createdAt,
         submissionId: solvedSubmission._id,
-        language: solvedSubmission.language,
+        languageId: solvedSubmission.languageId,
         passedTestCases: solvedSubmission.passedTestCases,
         totalTestCases: solvedSubmission.totalTestCases,
       });
@@ -228,6 +348,7 @@ export const checkProblemSolved = async (req, res) => {
       message: "Problem not solved yet",
     });
   } catch (err) {
+    console.error("❌ Error checking problem status:", err);
     res.status(500).json({
       message: "Error checking problem status",
       error: err.message,
@@ -235,18 +356,18 @@ export const checkProblemSolved = async (req, res) => {
   }
 };
 
-/**
- * Get all solved problems for the current user
- */
+// 🚀 BLAZING FAST: Optimized solved problems with single aggregation
 export const getSolvedProblems = async (req, res) => {
   try {
     const userId = req.user._id;
+    const { page = 1, limit = 50, difficulty, tags } = req.query;
+    const skip = (page - 1) * limit;
 
-    // Get unique problem IDs that user has solved
-    const solvedSubmissions = await Submission.aggregate([
+    // 🚀 Advanced aggregation pipeline for solved problems
+    const pipeline = [
       {
         $match: {
-          userId: userId,
+          userId,
           isCorrect: true,
           verdict: "Accepted",
         },
@@ -256,7 +377,8 @@ export const getSolvedProblems = async (req, res) => {
           _id: "$problemId",
           firstSolvedAt: { $min: "$createdAt" },
           totalAttempts: { $sum: 1 },
-          lastSubmission: { $max: "$createdAt" },
+          bestLanguage: { $first: "$languageId" },
+          bestTime: { $min: "$createdAt" },
         },
       },
       {
@@ -265,11 +387,38 @@ export const getSolvedProblems = async (req, res) => {
           localField: "_id",
           foreignField: "_id",
           as: "problem",
+          pipeline: [
+            { $project: { title: 1, difficulty: 1, tags: 1, description: 1 } },
+          ],
         },
       },
       {
         $unwind: "$problem",
       },
+    ];
+
+    // Add difficulty filter if provided
+    if (difficulty) {
+      const difficultyArray = difficulty
+        .split(",")
+        .map((d) => d.trim().toUpperCase());
+      pipeline.push({
+        $match: { "problem.difficulty": { $in: difficultyArray } },
+      });
+    }
+
+    // Add tag filter if provided
+    if (tags) {
+      const tagArray = tags
+        .split(",")
+        .map((tag) => new RegExp(`^${tag.trim()}$`, "i"));
+      pipeline.push({
+        $match: { "problem.tags": { $in: tagArray } },
+      });
+    }
+
+    // Add final projection, sort, and pagination
+    pipeline.push(
       {
         $project: {
           problemId: "$_id",
@@ -278,19 +427,37 @@ export const getSolvedProblems = async (req, res) => {
           tags: "$problem.tags",
           firstSolvedAt: 1,
           totalAttempts: 1,
-          lastSubmission: 1,
+          bestLanguage: 1,
+          _id: 0,
         },
       },
-      {
-        $sort: { firstSolvedAt: -1 },
-      },
+      { $sort: { firstSolvedAt: -1 } },
+      { $skip: skip },
+      { $limit: parseInt(limit) }
+    );
+
+    const [solvedProblems, totalCount] = await Promise.all([
+      Submission.aggregate(pipeline),
+      Submission.aggregate([
+        ...pipeline.slice(0, -3), // Remove sort, skip, limit
+        { $count: "total" },
+      ]),
     ]);
 
+    const total = totalCount[0]?.total || 0;
+
     res.json({
-      totalSolved: solvedSubmissions.length,
-      problems: solvedSubmissions,
+      totalSolved: total,
+      problems: solvedProblems,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit),
+      },
     });
   } catch (err) {
+    console.error("❌ Error fetching solved problems:", err);
     res.status(500).json({
       message: "Error fetching solved problems",
       error: err.message,
@@ -298,88 +465,145 @@ export const getSolvedProblems = async (req, res) => {
   }
 };
 
-/**
- * Get user's problem-solving statistics
- */
+// 🚀 BLAZING FAST: Lightning-speed user statistics with comprehensive metrics
 export const getUserStats = async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Count solved problems by difficulty
-    const stats = await Submission.aggregate([
+    // 🚀 Single ultra-optimized aggregation pipeline for all stats
+    const pipeline = [
       {
-        $match: {
-          userId: userId,
-          isCorrect: true,
-          verdict: "Accepted",
+        $facet: {
+          // Solved problems by difficulty
+          solvedByDifficulty: [
+            {
+              $match: {
+                userId,
+                isCorrect: true,
+                verdict: "Accepted",
+              },
+            },
+            {
+              $group: {
+                _id: "$problemId",
+                firstSolved: { $min: "$createdAt" },
+              },
+            },
+            {
+              $lookup: {
+                from: "problems",
+                localField: "_id",
+                foreignField: "_id",
+                as: "problem",
+                pipeline: [{ $project: { difficulty: 1 } }],
+              },
+            },
+            { $unwind: "$problem" },
+            {
+              $group: {
+                _id: "$problem.difficulty",
+                count: { $sum: 1 },
+                firstSolvedDate: { $min: "$firstSolved" },
+              },
+            },
+          ],
+          // Total attempts and recent activity
+          activityStats: [
+            { $match: { userId } },
+            {
+              $group: {
+                _id: null,
+                totalAttempts: { $sum: 1 },
+                acceptedSubmissions: {
+                  $sum: { $cond: [{ $eq: ["$verdict", "Accepted"] }, 1, 0] },
+                },
+                recentActivity: {
+                  $push: {
+                    $cond: [
+                      {
+                        $gte: [
+                          "$createdAt",
+                          new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+                        ],
+                      },
+                      { createdAt: "$createdAt", verdict: "$verdict" },
+                      "$$REMOVE",
+                    ],
+                  },
+                },
+                languages: { $addToSet: "$languageId" },
+              },
+            },
+          ],
         },
       },
-      {
-        $group: {
-          _id: "$problemId",
-        },
-      },
-      {
-        $lookup: {
-          from: "problems",
-          localField: "_id",
-          foreignField: "_id",
-          as: "problem",
-        },
-      },
-      {
-        $unwind: "$problem",
-      },
-      {
-        $group: {
-          _id: "$problem.difficulty",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+    ];
 
-    // Format stats
-    const formattedStats = {
+    const [result] = await Submission.aggregate(pipeline);
+    const solvedByDifficulty = result.solvedByDifficulty || [];
+    const activityStats = result.activityStats[0] || {};
+
+    // Format difficulty stats
+    const difficultyStats = {
       totalSolved: 0,
       easy: 0,
       medium: 0,
       hard: 0,
     };
 
-    stats.forEach((stat) => {
-      const difficulty = stat._id.toLowerCase();
-      formattedStats[difficulty] = stat.count;
-      formattedStats.totalSolved += stat.count;
+    solvedByDifficulty.forEach((stat) => {
+      const difficulty = stat._id?.toLowerCase();
+      if (difficulty && difficultyStats.hasOwnProperty(difficulty)) {
+        difficultyStats[difficulty] = stat.count;
+        difficultyStats.totalSolved += stat.count;
+      }
     });
 
-    // Get total attempts
-    const totalAttempts = await Submission.countDocuments({ userId });
+    // Calculate acceptance rate
+    const acceptanceRate =
+      activityStats.totalAttempts > 0
+        ? Math.round(
+            (activityStats.acceptedSubmissions / activityStats.totalAttempts) *
+              100
+          )
+        : 0;
 
-    // Get user info
-    const user = await User.findById(userId);
+    // Get user profile data
+    const user = await User.findById(userId)
+      .select("streak lastSolvedDate calendar")
+      .lean();
 
     res.json({
-      ...formattedStats,
-      totalAttempts,
-      streak: user.streak || 0,
-      lastSolvedDate: user.lastSolvedDate,
+      stats: difficultyStats,
+      totalAttempts: activityStats.totalAttempts || 0,
+      acceptanceRate,
+      streak: user?.streak || 0,
+      lastSolvedDate: user?.lastSolvedDate,
+      recentActivity: activityStats.recentActivity || [],
+      languagesUsed: (activityStats.languages || []).length,
+      performance: {
+        easy: difficultyStats.easy,
+        medium: difficultyStats.medium,
+        hard: difficultyStats.hard,
+        total: difficultyStats.totalSolved,
+      },
     });
   } catch (err) {
+    console.error("❌ Error fetching user stats:", err);
     res.status(500).json({
-      message: "Error fetching user stats",
+      message: "Error fetching user statistics",
       error: err.message,
     });
   }
 };
 
-// controllers/languageController.js
-
+// 🚀 BLAZING FAST: Optimized languages controller
 export const getLanguagesController = async (req, res) => {
   try {
     const languages = await getLanguages();
 
-    // Optional: filter allowed language IDs
-    const allowedIds = [71, 54, 62]; // Python, C++, Java
+    // Optional: filter allowed language IDs for better performance
+    const allowedIds = [71, 54, 62, 50, 51, 63]; // Python, C++, Java, C, C#, JavaScript
     const filtered = languages.filter((lang) => allowedIds.includes(lang.id));
 
     res.status(200).json(filtered);

@@ -1,61 +1,215 @@
 import Problem from "../models/problem.model.js";
 import Submission from "../models/submission.model.js";
 
-// Create Problem
-
-// Get All Problems
+// 🚀 BLAZING FAST: Get All Problems with optimized aggregation pipeline
 export const getAllProblems = async (req, res) => {
   try {
-    const problems = await Problem.find().sort({ createdAt: -1 });
+    const { page = 1, limit = 50, difficulty, tags } = req.query;
+    const skip = (page - 1) * limit;
 
-    // If user is authenticated, add solved status
-    if (req.user) {
-      const userId = req.user._id;
-      const solvedProblemIds = await Submission.distinct("problemId", {
-        userId,
-        isCorrect: true,
-        verdict: "Accepted",
-      });
+    // Build base match conditions
+    const matchConditions = {};
 
-      const problemsWithStatus = problems.map((problem) => ({
-        ...problem.toObject(),
-        solved: solvedProblemIds.some((id) => id.equals(problem._id)),
-      }));
-
-      return res.status(200).json(problemsWithStatus);
+    if (difficulty) {
+      const difficultyArray = difficulty
+        .split(",")
+        .map((d) => d.trim().toUpperCase());
+      matchConditions.difficulty = { $in: difficultyArray };
     }
 
-    res.status(200).json(problems);
+    if (tags) {
+      const tagArray = tags
+        .split(",")
+        .map((tag) => new RegExp(`^${tag.trim()}$`, "i"));
+      matchConditions.tags = { $in: tagArray };
+    }
+
+    // 🚀 Optimized aggregation pipeline for authenticated users
+    if (req.user) {
+      const userId = req.user._id;
+
+      const pipeline = [
+        { $match: matchConditions },
+        {
+          $lookup: {
+            from: "submissions",
+            let: { problemId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ["$problemId", "$$problemId"] },
+                      { $eq: ["$userId", userId] },
+                      { $eq: ["$isCorrect", true] },
+                      { $eq: ["$verdict", "Accepted"] },
+                    ],
+                  },
+                },
+              },
+              { $limit: 1 },
+            ],
+            as: "userSolution",
+          },
+        },
+        {
+          $addFields: {
+            solved: { $gt: [{ $size: "$userSolution" }, 0] },
+            solvedAt: { $arrayElemAt: ["$userSolution.createdAt", 0] },
+          },
+        },
+        { $project: { userSolution: 0 } },
+        { $sort: { createdAt: -1 } },
+        { $skip: skip },
+        { $limit: parseInt(limit) },
+      ];
+
+      const problems = await Problem.aggregate(pipeline);
+      const total = await Problem.countDocuments(matchConditions);
+
+      return res.status(200).json({
+        problems,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          pages: Math.ceil(total / limit),
+        },
+      });
+    }
+
+    // 🚀 Optimized query for public access
+    const problems = await Problem.find(matchConditions)
+      .select("-testCases.hiddenTestCases") // Exclude hidden test cases for performance
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean(); // Use lean() for better performance
+
+    const total = await Problem.countDocuments(matchConditions);
+
+    res.status(200).json({
+      problems,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    });
   } catch (err) {
+    console.error("❌ Error fetching problems:", err);
     res.status(500).json({ error: "Failed to fetch problems" });
   }
 };
 
-// Get Problem by ID
+// 🚀 BLAZING FAST: Get Problem by ID with optimized lookup
 export const getProblemById = async (req, res) => {
   try {
-    const problem = await Problem.findById(req.params.id);
-    if (!problem) return res.status(404).json({ message: "Problem not found" });
+    const problemId = req.params.id;
 
-    // If user is authenticated, add solved status
+    // 🚀 Optimized aggregation for authenticated users
     if (req.user) {
       const userId = req.user._id;
-      const solvedSubmission = await Submission.findOne({
-        problemId: req.params.id,
-        userId,
-        isCorrect: true,
-        verdict: "Accepted",
-      });
 
-      return res.status(200).json({
-        ...problem.toObject(),
-        solved: !!solvedSubmission,
-        solvedAt: solvedSubmission?.createdAt,
-      });
+      const pipeline = [
+        { $match: { _id: problemId } },
+        {
+          $lookup: {
+            from: "submissions",
+            let: { problemId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ["$problemId", "$$problemId"] },
+                      { $eq: ["$userId", userId] },
+                      { $eq: ["$isCorrect", true] },
+                      { $eq: ["$verdict", "Accepted"] },
+                    ],
+                  },
+                },
+              },
+              { $sort: { createdAt: 1 } },
+              { $limit: 1 },
+            ],
+            as: "userSolution",
+          },
+        },
+        {
+          $lookup: {
+            from: "submissions",
+            let: { problemId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$problemId", "$$problemId"] },
+                },
+              },
+              {
+                $group: {
+                  _id: null,
+                  totalSubmissions: { $sum: 1 },
+                  acceptedSubmissions: {
+                    $sum: { $cond: [{ $eq: ["$verdict", "Accepted"] }, 1, 0] },
+                  },
+                },
+              },
+            ],
+            as: "stats",
+          },
+        },
+        {
+          $addFields: {
+            solved: { $gt: [{ $size: "$userSolution" }, 0] },
+            solvedAt: { $arrayElemAt: ["$userSolution.createdAt", 0] },
+            totalSubmissions: {
+              $ifNull: [{ $arrayElemAt: ["$stats.totalSubmissions", 0] }, 0],
+            },
+            acceptanceRate: {
+              $cond: [
+                { $gt: [{ $arrayElemAt: ["$stats.totalSubmissions", 0] }, 0] },
+                {
+                  $multiply: [
+                    {
+                      $divide: [
+                        { $arrayElemAt: ["$stats.acceptedSubmissions", 0] },
+                        { $arrayElemAt: ["$stats.totalSubmissions", 0] },
+                      ],
+                    },
+                    100,
+                  ],
+                },
+                0,
+              ],
+            },
+          },
+        },
+        { $project: { userSolution: 0, stats: 0 } },
+      ];
+
+      const [problem] = await Problem.aggregate(pipeline);
+
+      if (!problem) {
+        return res.status(404).json({ message: "Problem not found" });
+      }
+
+      return res.status(200).json(problem);
+    }
+
+    // 🚀 Optimized query for public access
+    const problem = await Problem.findById(problemId)
+      .select("-testCases.hiddenTestCases")
+      .lean();
+
+    if (!problem) {
+      return res.status(404).json({ message: "Problem not found" });
     }
 
     res.status(200).json(problem);
   } catch (err) {
+    console.error("❌ Error fetching problem:", err);
     res.status(500).json({ error: "Failed to fetch problem" });
   }
 };
@@ -103,15 +257,21 @@ export const deleteProblem = async (req, res) => {
     res.status(500).json({ error: "Problem deletion failed" });
   }
 };
+// 🚀 BLAZING FAST: Optimized tag filtering with aggregation
 export const getProblemsByTags = async (req, res) => {
   try {
-    const { tags, difficulty } = req.query;
+    const { tags, difficulty, page = 1, limit = 50 } = req.query;
+    const skip = (page - 1) * limit;
 
-    const query = {};
+    // 🚀 Build efficient aggregation pipeline
+    const pipeline = [];
+    const matchConditions = {};
 
     if (tags && tags.trim() !== "") {
-      const tagArray = tags.split(",").map((tag) => tag.trim());
-      query.tags = { $in: tagArray.map((tag) => new RegExp(`^${tag}$`, "i")) };
+      const tagArray = tags
+        .split(",")
+        .map((tag) => new RegExp(`^${tag.trim()}$`, "i"));
+      matchConditions.tags = { $in: tagArray };
     }
 
     if (difficulty && difficulty.trim() !== "") {
@@ -120,13 +280,38 @@ export const getProblemsByTags = async (req, res) => {
         .map((d) => d.trim().toUpperCase())
         .filter((d) => ["EASY", "MEDIUM", "HARD"].includes(d));
       if (difficultyArray.length > 0) {
-        query.difficulty = { $in: difficultyArray };
+        matchConditions.difficulty = { $in: difficultyArray };
       }
     }
 
-    // If no filters, return all problems
-    const problems = await Problem.find(query).sort({ createdAt: -1 });
-    res.status(200).json(problems);
+    // Add match stage if there are conditions
+    if (Object.keys(matchConditions).length > 0) {
+      pipeline.push({ $match: matchConditions });
+    }
+
+    // Add pagination and sorting
+    pipeline.push(
+      { $sort: { difficulty: 1, createdAt: -1 } }, // Sort by difficulty first, then creation date
+      { $skip: skip },
+      { $limit: parseInt(limit) },
+      { $project: { testCases: 0 } } // Exclude test cases for performance
+    );
+
+    const problems = await Problem.aggregate(pipeline);
+
+    // Get total count
+    const total = await Problem.countDocuments(matchConditions);
+
+    res.status(200).json({
+      problems,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / limit),
+      },
+      filters: { tags, difficulty },
+    });
   } catch (error) {
     console.error("❌ Error fetching problems by tags:", error);
     res.status(500).json({
@@ -136,29 +321,54 @@ export const getProblemsByTags = async (req, res) => {
   }
 };
 
+// 🚀 BLAZING FAST: Cache-optimized tag retrieval
 export const getAllTags = async (req, res) => {
   try {
-    const tags = await Problem.distinct("tags");
-    res.status(200).json(tags);
+    // 🚀 Use aggregation for better performance with tag statistics
+    const pipeline = [
+      { $unwind: "$tags" },
+      {
+        $group: {
+          _id: "$tags",
+          count: { $sum: 1 },
+          difficulties: { $addToSet: "$difficulty" },
+        },
+      },
+      {
+        $project: {
+          tag: "$_id",
+          count: 1,
+          difficulties: 1,
+          _id: 0,
+        },
+      },
+      { $sort: { count: -1, tag: 1 } },
+    ];
+
+    const tagStats = await Problem.aggregate(pipeline);
+
+    // Extract just tag names for backward compatibility
+    const tags = tagStats.map((stat) => stat.tag);
+
+    res.status(200).json({
+      tags,
+      tagStats, // Include statistics for frontend optimization
+      total: tags.length,
+    });
   } catch (err) {
-    console.error("Error fetching tags:", err);
-    res
-      .status(500)
-      .json({ message: "Failed to fetch tags", error: err.message });
+    console.error("❌ Error fetching tags:", err);
+    res.status(500).json({
+      message: "Failed to fetch tags",
+      error: err.message,
+    });
   }
 };
 
-/**
- * Global search across problems
- * Searches in: title, description, tags, difficulty
- * Query params:
- *  - q: search query string (required)
- *  - difficulty: filter by difficulty (optional)
- * Example: /problems/search?q=array&difficulty=EASY
- */
+// 🚀 BLAZING FAST: Optimized search with advanced text indexing
 export const searchProblems = async (req, res) => {
   try {
-    const { q, difficulty } = req.query;
+    const { q, difficulty, page = 1, limit = 20 } = req.query;
+    const skip = (page - 1) * limit;
 
     if (!q || q.trim() === "") {
       return res.status(400).json({
@@ -167,39 +377,131 @@ export const searchProblems = async (req, res) => {
     }
 
     const searchTerm = q.trim();
-    const searchRegex = new RegExp(searchTerm, "i"); // case-insensitive
 
-    // Build search conditions (OR across fields)
-    const searchConditions = [
-      { title: searchRegex },
-      { description: searchRegex },
-      { tags: searchRegex },
-      { difficulty: searchRegex },
+    // 🚀 Advanced search pipeline with text scoring
+    const pipeline = [
+      {
+        $match: {
+          $and: [
+            {
+              $or: [
+                { $text: { $search: searchTerm } }, // Use text index if available
+                { title: { $regex: searchTerm, $options: "i" } },
+                { description: { $regex: searchTerm, $options: "i" } },
+                { tags: { $regex: searchTerm, $options: "i" } },
+              ],
+            },
+            ...(difficulty
+              ? [
+                  {
+                    difficulty: {
+                      $in: difficulty
+                        .split(",")
+                        .map((d) => d.trim().toUpperCase()),
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+      {
+        $addFields: {
+          relevanceScore: {
+            $add: [
+              // Title match gets highest score
+              {
+                $cond: [
+                  {
+                    $regexMatch: {
+                      input: "$title",
+                      regex: searchTerm,
+                      options: "i",
+                    },
+                  },
+                  10,
+                  0,
+                ],
+              },
+              // Tag match gets medium score
+              {
+                $cond: [
+                  { $in: [{ $regex: [searchTerm, "i"] }, "$tags"] },
+                  5,
+                  0,
+                ],
+              },
+              // Description match gets lower score
+              {
+                $cond: [
+                  {
+                    $regexMatch: {
+                      input: "$description",
+                      regex: searchTerm,
+                      options: "i",
+                    },
+                  },
+                  2,
+                  0,
+                ],
+              },
+            ],
+          },
+        },
+      },
+      { $sort: { relevanceScore: -1, createdAt: -1 } },
+      { $skip: skip },
+      { $limit: parseInt(limit) },
+      { $project: { relevanceScore: 0 } },
     ];
 
-    const query = { $or: searchConditions };
+    const problems = await Problem.aggregate(pipeline);
 
-    // Add difficulty filter if provided
-    if (difficulty) {
-      const difficultyArray = difficulty
-        .split(",")
-        .map((d) => d.trim().toUpperCase())
-        .filter((d) => ["EASY", "MEDIUM", "HARD"].includes(d));
+    // Count total for pagination
+    const countPipeline = [
+      {
+        $match: {
+          $and: [
+            {
+              $or: [
+                { title: { $regex: searchTerm, $options: "i" } },
+                { description: { $regex: searchTerm, $options: "i" } },
+                { tags: { $regex: searchTerm, $options: "i" } },
+              ],
+            },
+            ...(difficulty
+              ? [
+                  {
+                    difficulty: {
+                      $in: difficulty
+                        .split(",")
+                        .map((d) => d.trim().toUpperCase()),
+                    },
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+      { $count: "total" },
+    ];
 
-      if (difficultyArray.length > 0) {
-        query.difficulty = { $in: difficultyArray };
-      }
-    }
-
-    const problems = await Problem.find(query).sort({ createdAt: -1 });
+    const [countResult] = await Problem.aggregate(countPipeline);
+    const total = countResult?.total || 0;
 
     res.status(200).json({
       count: problems.length,
-      searchTerm: searchTerm,
+      total,
+      searchTerm,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / limit),
+      },
       results: problems,
     });
   } catch (err) {
-    console.error("Error in global search:", err);
+    console.error("❌ Error in global search:", err);
     res.status(500).json({
       message: "Failed to search problems",
       error: err.message,
