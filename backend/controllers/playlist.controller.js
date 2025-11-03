@@ -506,8 +506,7 @@ export const addProblemToPlaylist = async (req, res) => {
 
     // 🚀 Validate all problems exist in single query
     const validProblems = await Problem.find({ _id: { $in: objectIds } })
-      .select("_id title difficulty")
-      .lean();
+    .lean();
 
     if (validProblems.length !== objectIds.length) {
       return res.status(404).json({
