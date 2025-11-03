@@ -64,9 +64,7 @@ export const getUserPlaylists = async (req, res) => {
     const { page = 1, limit = 20, search, sortBy = "updatedAt" } = req.query;
     const skip = (page - 1) * limit;
 
-    // Build match conditions
     const matchConditions = { userId };
-
     if (search) {
       matchConditions.$or = [
         { title: { $regex: search, $options: "i" } },
@@ -74,18 +72,23 @@ export const getUserPlaylists = async (req, res) => {
       ];
     }
 
-    // 🚀 Single aggregation pipeline for all playlist data with stats
     const pipeline = [
       { $match: matchConditions },
+
+      // ✅ Lookup problems (only essential fields)
       {
         $lookup: {
           from: "problems",
           localField: "problems",
           foreignField: "_id",
           as: "problemDetails",
-          pipeline: [{ $project: { title: 1, difficulty: 1, tags: 1 } }],
+          pipeline: [
+            { $project: { title: 1, difficulty: 1, tags: 1, _id: 1 } },
+          ],
         },
       },
+
+      // ✅ Lookup user submissions to count solved problems
       {
         $lookup: {
           from: "submissions",
@@ -108,6 +111,8 @@ export const getUserPlaylists = async (req, res) => {
           as: "solvedProblems",
         },
       },
+
+      // ✅ Add computed stats
       {
         $addFields: {
           problemCount: { $size: "$problems" },
@@ -163,6 +168,8 @@ export const getUserPlaylists = async (req, res) => {
           lastActivity: "$updatedAt",
         },
       },
+
+      // ✅ Only include what you need — no exclusions
       {
         $project: {
           title: 1,
@@ -175,13 +182,11 @@ export const getUserPlaylists = async (req, res) => {
           progressPercentage: 1,
           difficultyBreakdown: 1,
           lastActivity: 1,
-          problemDetails: 0, // Remove detailed problem data for list view
-          solvedProblems: 0,
         },
       },
     ];
 
-    // Add sorting
+    // Sorting
     const sortOptions = {};
     switch (sortBy) {
       case "title":
@@ -206,8 +211,10 @@ export const getUserPlaylists = async (req, res) => {
       { $limit: parseInt(limit) }
     );
 
-    const playlists = await Playlist.aggregate(pipeline);
-    const total = await Playlist.countDocuments(matchConditions);
+    const [playlists, total] = await Promise.all([
+      Playlist.aggregate(pipeline),
+      Playlist.countDocuments(matchConditions),
+    ]);
 
     res.json({
       playlists,
@@ -222,12 +229,20 @@ export const getUserPlaylists = async (req, res) => {
         averageProgress:
           playlists.length > 0
             ? Math.round(
-                playlists.reduce((sum, p) => sum + p.progressPercentage, 0) /
-                  playlists.length
+                playlists.reduce(
+                  (sum, p) => sum + (p.progressPercentage || 0),
+                  0
+                ) / playlists.length
               )
             : 0,
-        totalProblems: playlists.reduce((sum, p) => sum + p.problemCount, 0),
-        totalSolved: playlists.reduce((sum, p) => sum + p.solvedCount, 0),
+        totalProblems: playlists.reduce(
+          (sum, p) => sum + (p.problemCount || 0),
+          0
+        ),
+        totalSolved: playlists.reduce(
+          (sum, p) => sum + (p.solvedCount || 0),
+          0
+        ),
       },
     });
   } catch (err) {
