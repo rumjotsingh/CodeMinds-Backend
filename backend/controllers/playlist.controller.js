@@ -481,11 +481,17 @@ export const deletePlaylist = async (req, res) => {
 };
 
 // 🚀 BLAZING FAST: Optimized bulk problem addition to playlist
+// 🚀 BLAZING FAST: Optimized bulk problem addition to playlist
 export const addProblemToPlaylist = async (req, res) => {
   const { problemId, problemIds } = req.body;
-  const playlistId = req.params.id;
+  const { id: playlistId } = req.params;
 
   try {
+    // ✅ Validate playlistId format
+    if (!mongoose.Types.ObjectId.isValid(playlistId)) {
+      return res.status(400).json({ message: "Invalid playlist ID" });
+    }
+
     // Handle both single and bulk additions
     const problemsToAdd = problemIds || [problemId];
 
@@ -493,43 +499,40 @@ export const addProblemToPlaylist = async (req, res) => {
       return res.status(400).json({ message: "No problems specified" });
     }
 
+    // ✅ Validate problem IDs
+    const objectIds = problemsToAdd
+      .filter(Boolean)
+      .map((id) => new mongoose.Types.ObjectId(id));
+
     // 🚀 Validate all problems exist in single query
-    const validProblems = await Problem.find({
-      _id: { $in: problemsToAdd },
-    })
+    const validProblems = await Problem.find({ _id: { $in: objectIds } })
       .select("_id title difficulty")
       .lean();
 
-    if (validProblems.length !== problemsToAdd.length) {
+    if (validProblems.length !== objectIds.length) {
       return res.status(404).json({
         message: "One or more problems not found",
         validCount: validProblems.length,
-        requestedCount: problemsToAdd.length,
+        requestedCount: objectIds.length,
       });
     }
 
-    // 🚀 Optimized playlist update with single atomic operation
+    // 🚀 Perform the atomic update safely
     const result = await Playlist.findByIdAndUpdate(
-      playlistId,
+      new mongoose.Types.ObjectId(playlistId),
       {
-        $addToSet: { problems: { $each: problemsToAdd } }, // Prevents duplicates
+        $addToSet: { problems: { $each: objectIds } }, // Prevent duplicates
         $set: { updatedAt: new Date() },
       },
-      {
-        new: true,
-        select: "title problems updatedAt",
-      }
+      { new: true, select: "title problems updatedAt" }
     ).lean();
 
     if (!result) {
       return res.status(404).json({ message: "Playlist not found" });
     }
 
-    // Calculate how many were actually added
-    const addedCount = Math.min(validProblems.length, problemsToAdd.length);
-
     res.json({
-      message: `${addedCount} problem(s) added to playlist`,
+      message: `${validProblems.length} problem(s) added to playlist`,
       playlist: {
         id: result._id,
         title: result.title,
