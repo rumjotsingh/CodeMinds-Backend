@@ -10,6 +10,8 @@ import playlistRoutes from "./routes/playlist.routes.js";
 import announcementRoutes from "./routes/announcement.routes.js";
 import contestRoutes from "./routes/contest.routes.js";
 import cors from "cors";
+import redisClient from "./config/redis.js";
+import { rateLimiter } from "./middleware/cache.js";
 
 dotenv.config();
 
@@ -18,25 +20,49 @@ app.use(express.json());
 
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
-main()
+
+// Global rate limiting (100 requests per minute)
+app.use(rateLimiter(100, 60000, "Too many requests, please try again later"));
+
+// Initialize database and Redis connections
+Promise.all([
+  main(), // MongoDB connection
+  redisClient.connect(), // Redis connection
+])
   .then(() => {
-    console.log("Connected to Database");
+    console.log("✅ All services connected successfully");
   })
   .catch((err) => {
-    console.log(err);
+    console.error("❌ Service connection error:", err);
   });
+
 async function main() {
   await mongoose.connect(process.env.MONGO_URL);
+  console.log("✅ Connected to MongoDB Database");
 }
 app.listen(process.env.PORT, (req, res) => {
-  console.log("the sever is listening up port ", process.env.PORT);
+  console.log("🚀 Server is listening on port", process.env.PORT);
 });
-  app.use("/api/v1", UserRoutes);
-  app.use("/api/v1", problemRoute);
-  app.use("/api/v1", submissionRoutes);
-  app.use("/api/v1", commentRoutes);
 
-  app.use("/api/v1", announcementRoutes);
-  app.use("/api/v1", leaderboardRoutes);
-  app.use("/api/v1", playlistRoutes);
-  app.use("/api/v1", contestRoutes);
+// Routes
+app.use("/api/v1", UserRoutes);
+app.use("/api/v1", problemRoute);
+app.use("/api/v1", submissionRoutes);
+app.use("/api/v1", commentRoutes);
+app.use("/api/v1", announcementRoutes);
+app.use("/api/v1", leaderboardRoutes);
+app.use("/api/v1", playlistRoutes);
+app.use("/api/v1", contestRoutes);
+
+// Graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("🔄 SIGTERM received, shutting down gracefully...");
+  await redisClient.disconnect();
+  process.exit(0);
+});
+
+process.on("SIGINT", async () => {
+  console.log("🔄 SIGINT received, shutting down gracefully...");
+  await redisClient.disconnect();
+  process.exit(0);
+});
