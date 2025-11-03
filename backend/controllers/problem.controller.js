@@ -1,5 +1,5 @@
+import mongoose from "mongoose";
 import Problem from "../models/problem.model.js";
-import Submission from "../models/submission.model.js";
 
 // 🚀 BLAZING FAST: Get All Problems with optimized aggregation pipeline
 export const getAllProblems = async (req, res) => {
@@ -104,13 +104,11 @@ export const getAllProblems = async (req, res) => {
 };
 
 // 🚀 BLAZING FAST: Get Problem by ID with optimized lookup
-import mongoose from "mongoose";
-import Problem from "../models/problem.model.js";
 
 export const getProblemById = async (req, res) => {
   try {
     const problemId = req.params.id;
-
+    console.log("Fetching problem with ID:", problemId);
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(problemId)) {
       return res.status(400).json({ message: "Invalid problem ID" });

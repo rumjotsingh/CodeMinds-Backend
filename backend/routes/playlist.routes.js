@@ -7,11 +7,18 @@ import {
   deletePlaylist,
   addProblemToPlaylist,
   removeProblemFromPlaylist,
+  getPublicPlaylists,
+  searchPlaylists,
 } from "../controllers/playlist.controller.js";
 import { authMiddleware } from "../middleware.js";
 
 const router = express.Router();
 
+// Public routes
+router.get("/playlists/public", getPublicPlaylists);
+router.get("/playlists/search", searchPlaylists);
+
+// Protected routes (require authentication)
 router.post("/playlists", authMiddleware, createPlaylist);
 router.get("/playlists", authMiddleware, getUserPlaylists);
 router.get("/playlists/:id", authMiddleware, getPlaylist);

@@ -1,55 +1,29 @@
 import Playlist from "../models/playlist.model.js";
 import Problem from "../models/problem.model.js";
+import redisClient from "../config/redis.js";
+import upstashRedisClient from "../config/redis.js";
 
-import Submission from "../models/submission.model.js";
-import mongoose from "mongoose";
-
-// 🚀 BLAZING FAST: Optimized playlist creation with validation
+// ✅ Create new playlist
 export const createPlaylist = async (req, res) => {
-  const { title, description, isPublic = false } = req.body;
+  const { title, description, tags, difficulty } = req.body;
   const userId = req.user._id;
 
   try {
-    // Validate input
-    if (!title || title.trim().length < 3) {
-      return res.status(400).json({
-        message: "Title must be at least 3 characters long",
-      });
-    }
-
-    // Check for duplicate playlist name for this user
-    const existingPlaylist = await Playlist.findOne({
-      userId,
-      title: title.trim(),
-    })
-      .select("_id")
-      .lean();
-
-    if (existingPlaylist) {
-      return res.status(409).json({
-        message: "Playlist with this title already exists",
-      });
-    }
-
     const playlist = await Playlist.create({
-      title: title.trim(),
-      description: description?.trim() || "",
+      title,
+      description,
       userId,
-      isPublic,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      tags: tags || [],
+      difficulty: difficulty || "MIXED",
     });
 
-    res.status(201).json({
-      message: "Playlist created successfully",
-      playlist: {
-        ...playlist.toObject(),
-        problemCount: 0,
-        solvedCount: 0,
-      },
-    });
+    // Clear user playlists cache
+    await redisClient.delPattern(`playlists:user:${userId}:*`);
+
+    res
+      .status(201)
+      .json({ message: "Playlist created successfully", playlist });
   } catch (err) {
-    console.error("❌ Error creating playlist:", err);
     res.status(500).json({
       message: "Failed to create playlist",
       error: err.message,
@@ -57,196 +31,30 @@ export const createPlaylist = async (req, res) => {
   }
 };
 
-// 🚀 BLAZING FAST: Ultra-optimized user playlists with comprehensive stats
+// ✅ Get all playlists for logged-in user
 export const getUserPlaylists = async (req, res) => {
+  const userId = req.user._id;
+  const cacheKey = `playlists:user:${userId}`;
+
   try {
-    const userId = req.user._id;
-    const { page = 1, limit = 20, search, sortBy = "updatedAt" } = req.query;
-    const skip = (page - 1) * limit;
-
-    const matchConditions = { userId };
-    if (search) {
-      matchConditions.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { description: { $regex: search, $options: "i" } },
-      ];
+    // Check cache first
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      console.log("Cache hit");
+      return res.json({ playlists: cached, source: "cache" });
     }
 
-    const pipeline = [
-      { $match: matchConditions },
+    const playlists = await Playlist.find({ userId })
+      .select(
+        "title description problemCount isPublic tags difficulty createdAt updatedAt"
+      )
+      .sort({ updatedAt: -1 });
 
-      // ✅ Lookup problems (only essential fields)
-      {
-        $lookup: {
-          from: "problems",
-          localField: "problems",
-          foreignField: "_id",
-          as: "problemDetails",
-          pipeline: [
-            { $project: { title: 1, difficulty: 1, tags: 1, _id: 1 } },
-          ],
-        },
-      },
+    // Cache for 5 minutes
+    await redisClient.set(cacheKey, playlists, 300);
 
-      // ✅ Lookup user submissions to count solved problems
-      {
-        $lookup: {
-          from: "submissions",
-          let: { problems: "$problems", userId: userId },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$userId", "$$userId"] },
-                    { $in: ["$problemId", "$$problems"] },
-                    { $eq: ["$isCorrect", true] },
-                    { $eq: ["$verdict", "Accepted"] },
-                  ],
-                },
-              },
-            },
-            { $group: { _id: "$problemId" } },
-          ],
-          as: "solvedProblems",
-        },
-      },
-
-      // ✅ Add computed stats
-      {
-        $addFields: {
-          problemCount: { $size: "$problems" },
-          solvedCount: { $size: "$solvedProblems" },
-          progressPercentage: {
-            $cond: [
-              { $gt: [{ $size: "$problems" }, 0] },
-              {
-                $round: [
-                  {
-                    $multiply: [
-                      {
-                        $divide: [
-                          { $size: "$solvedProblems" },
-                          { $size: "$problems" },
-                        ],
-                      },
-                      100,
-                    ],
-                  },
-                  1,
-                ],
-              },
-              0,
-            ],
-          },
-          difficultyBreakdown: {
-            easy: {
-              $size: {
-                $filter: {
-                  input: "$problemDetails",
-                  cond: { $eq: ["$$this.difficulty", "EASY"] },
-                },
-              },
-            },
-            medium: {
-              $size: {
-                $filter: {
-                  input: "$problemDetails",
-                  cond: { $eq: ["$$this.difficulty", "MEDIUM"] },
-                },
-              },
-            },
-            hard: {
-              $size: {
-                $filter: {
-                  input: "$problemDetails",
-                  cond: { $eq: ["$$this.difficulty", "HARD"] },
-                },
-              },
-            },
-          },
-          lastActivity: "$updatedAt",
-        },
-      },
-
-      // ✅ Only include what you need — no exclusions
-      {
-        $project: {
-          title: 1,
-          description: 1,
-          isPublic: 1,
-          createdAt: 1,
-          updatedAt: 1,
-          problemCount: 1,
-          solvedCount: 1,
-          progressPercentage: 1,
-          difficultyBreakdown: 1,
-          lastActivity: 1,
-        },
-      },
-    ];
-
-    // Sorting
-    const sortOptions = {};
-    switch (sortBy) {
-      case "title":
-        sortOptions.title = 1;
-        break;
-      case "created":
-        sortOptions.createdAt = -1;
-        break;
-      case "progress":
-        sortOptions.progressPercentage = -1;
-        break;
-      case "problems":
-        sortOptions.problemCount = -1;
-        break;
-      default:
-        sortOptions.updatedAt = -1;
-    }
-
-    pipeline.push(
-      { $sort: sortOptions },
-      { $skip: skip },
-      { $limit: parseInt(limit) }
-    );
-
-    const [playlists, total] = await Promise.all([
-      Playlist.aggregate(pipeline),
-      Playlist.countDocuments(matchConditions),
-    ]);
-
-    res.json({
-      playlists,
-      pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total,
-        pages: Math.ceil(total / limit),
-      },
-      summary: {
-        total,
-        averageProgress:
-          playlists.length > 0
-            ? Math.round(
-                playlists.reduce(
-                  (sum, p) => sum + (p.progressPercentage || 0),
-                  0
-                ) / playlists.length
-              )
-            : 0,
-        totalProblems: playlists.reduce(
-          (sum, p) => sum + (p.problemCount || 0),
-          0
-        ),
-        totalSolved: playlists.reduce(
-          (sum, p) => sum + (p.solvedCount || 0),
-          0
-        ),
-      },
-    });
+    res.json({ playlists, source: "database" });
   } catch (err) {
-    console.error("❌ Error fetching user playlists:", err);
     res.status(500).json({
       message: "Error fetching playlists",
       error: err.message,
@@ -254,203 +62,45 @@ export const getUserPlaylists = async (req, res) => {
   }
 };
 
-// 🚀 BLAZING FAST: Comprehensive playlist details with solve status
+// ✅ Get a single playlist with problems
 export const getPlaylist = async (req, res) => {
+  const playlistId = req.params.id;
+  const cacheKey = `playlist:${playlistId}:details`;
+
   try {
-    const playlistId = req.params.id;
-    const userId = req.user?._id;
-
-    // 🚀 Single aggregation for complete playlist data
-    const pipeline = [
-      { $match: { _id: new mongoose.Types.ObjectId(playlistId) } },
-      {
-        $lookup: {
-          from: "problems",
-          localField: "problems",
-          foreignField: "_id",
-          as: "problemDetails",
-          pipeline: [
-            {
-              $project: {
-                title: 1,
-                description: 1,
-                difficulty: 1,
-                tags: 1,
-                testcases: {
-                  $filter: {
-                    input: "$testcases",
-                    cond: { $ne: ["$$this.isHidden", true] },
-                  },
-                },
-              },
-            },
-          ],
-        },
-      },
-    ];
-
-    // Add user solve status if authenticated
-    if (userId) {
-      pipeline.push({
-        $lookup: {
-          from: "submissions",
-          let: { problems: "$problems", userId: userId },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$userId", "$$userId"] },
-                    { $in: ["$problemId", "$$problems"] },
-                    { $eq: ["$isCorrect", true] },
-                    { $eq: ["$verdict", "Accepted"] },
-                  ],
-                },
-              },
-            },
-            {
-              $group: {
-                _id: "$problemId",
-                firstSolved: { $min: "$createdAt" },
-                lastSubmission: { $max: "$createdAt" },
-                attempts: { $sum: 1 },
-              },
-            },
-          ],
-          as: "userSolutions",
-        },
-      });
+    // Check cache first
+    const cached = await upstashRedisClient.get(cacheKey);
+    if (cached) {
+      return res.json({ ...cached, source: "cache" });
     }
 
-    pipeline.push({
-      $addFields: {
-        problemsWithStatus: {
-          $map: {
-            input: "$problemDetails",
-            as: "problem",
-            in: {
-              $mergeObjects: [
-                "$$problem",
-                {
-                  solved: userId
-                    ? {
-                        $gt: [
-                          {
-                            $size: {
-                              $filter: {
-                                input: "$userSolutions",
-                                cond: { $eq: ["$$this._id", "$$problem._id"] },
-                              },
-                            },
-                          },
-                          0,
-                        ],
-                      }
-                    : false,
-                  solveInfo: userId
-                    ? {
-                        $let: {
-                          vars: {
-                            solution: {
-                              $arrayElemAt: [
-                                {
-                                  $filter: {
-                                    input: "$userSolutions",
-                                    cond: {
-                                      $eq: ["$$this._id", "$$problem._id"],
-                                    },
-                                  },
-                                },
-                                0,
-                              ],
-                            },
-                          },
-                          in: {
-                            firstSolved: "$$solution.firstSolved",
-                            lastSubmission: "$$solution.lastSubmission",
-                            attempts: "$$solution.attempts",
-                          },
-                        },
-                      }
-                    : null,
-                },
-              ],
-            },
-          },
-        },
-        statistics: {
-          totalProblems: { $size: "$problems" },
-          solvedProblems: userId ? { $size: "$userSolutions" } : 0,
-          difficultyBreakdown: {
-            easy: {
-              $size: {
-                $filter: {
-                  input: "$problemDetails",
-                  cond: { $eq: ["$$this.difficulty", "EASY"] },
-                },
-              },
-            },
-            medium: {
-              $size: {
-                $filter: {
-                  input: "$problemDetails",
-                  cond: { $eq: ["$$this.difficulty", "MEDIUM"] },
-                },
-              },
-            },
-            hard: {
-              $size: {
-                $filter: {
-                  input: "$problemDetails",
-                  cond: { $eq: ["$$this.difficulty", "HARD"] },
-                },
-              },
-            },
-          },
-          progressPercentage: userId
-            ? {
-                $cond: [
-                  { $gt: [{ $size: "$problems" }, 0] },
-                  {
-                    $round: [
-                      {
-                        $multiply: [
-                          {
-                            $divide: [
-                              { $size: "$userSolutions" },
-                              { $size: "$problems" },
-                            ],
-                          },
-                          100,
-                        ],
-                      },
-                      1,
-                    ],
-                  },
-                  0,
-                ],
-              }
-            : 0,
-        },
-      },
-    });
-
-    pipeline.push({
-      $project: {
-        userSolutions: 0,
-        problemDetails: 0, // Use problemsWithStatus instead
-      },
-    });
-
-    const [playlist] = await Playlist.aggregate(pipeline);
+    const playlist = await Playlist.findById(playlistId)
+      .populate({
+        path: "problems",
+        select: "title description difficulty tags createdAt",
+      })
+      .populate({
+        path: "userId",
+        select: "username profilePicture",
+      });
 
     if (!playlist) {
       return res.status(404).json({ message: "Playlist not found" });
     }
 
-    res.json(playlist);
+    // Check if user has access (owner or public playlist)
+    if (
+      !playlist.isPublic &&
+      playlist.userId._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    // Cache for 5 minutes
+    await upstashRedisClient.set(cacheKey, playlist, 300);
+
+    res.json({ playlist, source: "database" });
   } catch (err) {
-    console.error("❌ Error fetching playlist:", err);
     res.status(500).json({
       message: "Error fetching playlist",
       error: err.message,
@@ -460,139 +110,287 @@ export const getPlaylist = async (req, res) => {
 
 // ✅ Update playlist title/description
 export const updatePlaylist = async (req, res) => {
-  try {
-    const playlist = await Playlist.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-    res.json({ message: "Playlist updated", playlist });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to update", error: err.message });
-  }
-};
-
-// ✅ Delete playlist
-export const deletePlaylist = async (req, res) => {
-  try {
-    await Playlist.findByIdAndDelete(req.params.id);
-    res.json({ message: "Playlist deleted" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to delete", error: err.message });
-  }
-};
-
-// 🚀 BLAZING FAST: Optimized bulk problem addition to playlist
-// 🚀 BLAZING FAST: Optimized bulk problem addition to playlist
-export const addProblemToPlaylist = async (req, res) => {
-  const { problemId, problemIds } = req.body;
-  const { id: playlistId } = req.params;
+  const playlistId = req.params.id;
+  const { title, description, tags, difficulty, isPublic } = req.body;
 
   try {
-    // ✅ Validate playlistId format
-    if (!mongoose.Types.ObjectId.isValid(playlistId)) {
-      return res.status(400).json({ message: "Invalid playlist ID" });
-    }
+    const playlist = await Playlist.findById(playlistId);
 
-    // Handle both single and bulk additions
-    const problemsToAdd = problemIds || [problemId];
-
-    if (!problemsToAdd || problemsToAdd.length === 0) {
-      return res.status(400).json({ message: "No problems specified" });
-    }
-
-    // ✅ Validate problem IDs
-    const objectIds = problemsToAdd
-      .filter(Boolean)
-      .map((id) => new mongoose.Types.ObjectId(id));
-
-    // 🚀 Validate all problems exist in single query
-    const validProblems = await Problem.find({ _id: { $in: objectIds } })
-    .lean();
-
-    if (validProblems.length !== objectIds.length) {
-      return res.status(404).json({
-        message: "One or more problems not found",
-        validCount: validProblems.length,
-        requestedCount: objectIds.length,
-      });
-    }
-
-    // 🚀 Perform the atomic update safely
-    const result = await Playlist.findByIdAndUpdate(
-      new mongoose.Types.ObjectId(playlistId),
-      {
-        $addToSet: { problems: { $each: objectIds } }, // Prevent duplicates
-        $set: { updatedAt: new Date() },
-      },
-      { new: true, select: "title problems updatedAt" }
-    ).lean();
-
-    if (!result) {
+    if (!playlist) {
       return res.status(404).json({ message: "Playlist not found" });
     }
 
-    res.json({
-      message: `${validProblems.length} problem(s) added to playlist`,
-      playlist: {
-        id: result._id,
-        title: result.title,
-        problemCount: result.problems.length,
-        addedProblems: validProblems,
-        updatedAt: result.updatedAt,
-      },
-    });
+    // Check ownership
+    if (playlist.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    // Update fields
+    if (title !== undefined) playlist.title = title;
+    if (description !== undefined) playlist.description = description;
+    if (tags !== undefined) playlist.tags = tags;
+    if (difficulty !== undefined) playlist.difficulty = difficulty;
+    if (isPublic !== undefined) playlist.isPublic = isPublic;
+
+    await playlist.save();
+
+    // Clear related caches
+    await upstashRedisClient.del(`playlist:${playlistId}:details`);
+    await upstashRedisClient.delPattern(`playlists:user:${req.user._id}:*`);
+
+    res.json({ message: "Playlist updated successfully", playlist });
   } catch (err) {
-    console.error("❌ Error adding problems to playlist:", err);
     res.status(500).json({
-      message: "Failed to add problem(s)",
+      message: "Failed to update playlist",
       error: err.message,
     });
   }
 };
 
-// 🚀 BLAZING FAST: Optimized bulk problem removal from playlist
-export const removeProblemFromPlaylist = async (req, res) => {
-  const { problemId, problemIds } = req.body;
+// ✅ Delete playlist
+export const deletePlaylist = async (req, res) => {
   const playlistId = req.params.id;
 
   try {
-    // Handle both single and bulk removals
-    const problemsToRemove = problemIds || [problemId];
+    const playlist = await Playlist.findById(playlistId);
 
-    if (!problemsToRemove || problemsToRemove.length === 0) {
-      return res.status(400).json({ message: "No problems specified" });
-    }
-
-    // 🚀 Optimized playlist update with single atomic operation
-    const result = await Playlist.findByIdAndUpdate(
-      playlistId,
-      {
-        $pullAll: { problems: problemsToRemove },
-        $set: { updatedAt: new Date() },
-      },
-      {
-        new: true,
-        select: "title problems updatedAt",
-      }
-    ).lean();
-
-    if (!result) {
+    if (!playlist) {
       return res.status(404).json({ message: "Playlist not found" });
     }
 
+    // Check ownership
+    if (playlist.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    await Playlist.findByIdAndDelete(playlistId);
+
+    // Clear related caches
+    await upstashRedisClient.del(`playlist:${playlistId}:details`);
+    await upstashRedisClient.delPattern(`playlists:user:${req.user._id}:*`);
+
+    res.json({ message: "Playlist deleted successfully" });
+  } catch (err) {
+    res.status(500).json({
+      message: "Failed to delete playlist",
+      error: err.message,
+    });
+  }
+};
+
+// ✅ Add problem to playlist
+export const addProblemToPlaylist = async (req, res) => {
+  const { problemId } = req.body;
+  const playlistId = req.params.id;
+
+  try {
+    // Validate problem exists
+    const problem = await Problem.findById(problemId);
+    if (!problem) {
+      return res.status(404).json({ message: "Problem not found" });
+    }
+
+    // Find the playlist
+    const playlist = await Playlist.findById(playlistId);
+    if (!playlist) {
+      return res.status(404).json({ message: "Playlist not found" });
+    }
+
+    // Check ownership
+    if (playlist.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    // Check if problem already exists in playlist
+    const problemExists = playlist.problems.some(
+      (pid) => pid.toString() === problemId
+    );
+
+    if (problemExists) {
+      return res.status(400).json({
+        message: "Problem already exists in this playlist",
+      });
+    }
+
+    // Add problem to playlist
+    playlist.problems.push(problemId);
+    await playlist.save(); // This will trigger the pre-save hook to update problemCount
+
+    // Clear related caches
+    await upstashRedisClient.del(`playlist:${playlistId}:details`);
+
+    // Populate the newly added problem for response
+    await playlist.populate({
+      path: "problems",
+      select: "title description difficulty tags",
+    });
+
     res.json({
-      message: `${problemsToRemove.length} problem(s) removed from playlist`,
-      playlist: {
-        id: result._id,
-        title: result.title,
-        problemCount: result.problems.length,
-        removedCount: problemsToRemove.length,
-        updatedAt: result.updatedAt,
-      },
+      message: "Problem added successfully",
+      playlist,
+      addedProblem: problem,
     });
   } catch (err) {
-    console.error("❌ Error removing problems from playlist:", err);
     res.status(500).json({
-      message: "Failed to remove problem(s)",
+      message: "Failed to add problem",
+      error: err.message,
+    });
+  }
+};
+
+// ✅ Remove problem from playlist
+export const removeProblemFromPlaylist = async (req, res) => {
+  const { problemId } = req.body;
+  const playlistId = req.params.id;
+
+  try {
+    const playlist = await Playlist.findById(playlistId);
+
+    if (!playlist) {
+      return res.status(404).json({ message: "Playlist not found" });
+    }
+
+    // Check ownership
+    if (playlist.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    // Check if problem exists in playlist
+    const problemIndex = playlist.problems.findIndex(
+      (pid) => pid.toString() === problemId
+    );
+
+    if (problemIndex === -1) {
+      return res.status(404).json({
+        message: "Problem not found in this playlist",
+      });
+    }
+
+    // Remove problem from playlist
+    playlist.problems.splice(problemIndex, 1);
+    await playlist.save(); // This will trigger the pre-save hook to update problemCount
+
+    // Clear related caches
+    await upstashRedisClient.del(`playlist:${playlistId}:details`);
+    await upstashRedisClient.delPattern(`playlists:user:${req.user._id}:*`);
+
+    res.json({
+      message: "Problem removed successfully",
+      playlist,
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Failed to remove problem",
+      error: err.message,
+    });
+  }
+};
+
+// ✅ Get public playlists
+export const getPublicPlaylists = async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+  const cacheKey = `playlists:public:page:${page}:limit:${limit}`;
+
+  try {
+    // Check cache first
+    const cached = await upstashRedisClient.get(cacheKey);
+    if (cached) {
+      return res.json({ ...cached, source: "cache" });
+    }
+
+    const [playlists, total] = await Promise.all([
+      Playlist.find({ isPublic: true })
+        .populate({
+          path: "userId",
+          select: "username profilePicture",
+        })
+        .select(
+          "title description problemCount tags difficulty createdAt updatedAt"
+        )
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Playlist.countDocuments({ isPublic: true }),
+    ]);
+
+    const result = {
+      playlists,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+
+    // Cache for 5 minutes
+    await upstashRedisClient.set(cacheKey, result, 300);
+
+    res.json({ ...result, source: "database" });
+  } catch (err) {
+    res.status(500).json({
+      message: "Error fetching public playlists",
+      error: err.message,
+    });
+  }
+};
+
+// ✅ Search playlists
+export const searchPlaylists = async (req, res) => {
+  const { query, difficulty, tags } = req.query;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const skip = (page - 1) * limit;
+
+  try {
+    const searchFilter = { isPublic: true };
+
+    if (query) {
+      searchFilter.$or = [
+        { title: { $regex: query, $options: "i" } },
+        { description: { $regex: query, $options: "i" } },
+      ];
+    }
+
+    if (difficulty && difficulty !== "ALL") {
+      searchFilter.difficulty = difficulty;
+    }
+
+    if (tags) {
+      const tagArray = Array.isArray(tags) ? tags : [tags];
+      searchFilter.tags = { $in: tagArray };
+    }
+
+    const [playlists, total] = await Promise.all([
+      Playlist.find(searchFilter)
+        .populate({
+          path: "userId",
+          select: "username profilePicture",
+        })
+        .select(
+          "title description problemCount tags difficulty createdAt updatedAt"
+        )
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Playlist.countDocuments(searchFilter),
+    ]);
+
+    res.json({
+      playlists,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+      searchCriteria: { query, difficulty, tags },
+    });
+  } catch (err) {
+    res.status(500).json({
+      message: "Error searching playlists",
       error: err.message,
     });
   }
