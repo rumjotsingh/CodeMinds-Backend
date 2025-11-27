@@ -40,6 +40,58 @@ async function main() {
   await mongoose.connect(process.env.MONGO_URL);
   console.log("✅ Connected to MongoDB Database");
 }
+
+// Health check endpoint for Docker
+app.get("/health", async (req, res) => {
+  try {
+    // Check MongoDB connection
+    const mongoStatus =
+      mongoose.connection.readyState === 1 ? "connected" : "disconnected";
+
+    // Check Redis connection
+    const redisStatus = (await redisClient.ping())
+      ? "connected"
+      : "disconnected";
+
+    const health = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      services: {
+        mongodb: mongoStatus,
+        redis: redisStatus,
+      },
+      environment: process.env.NODE_ENV || "development",
+    };
+
+    // If any service is down, return 503
+    if (mongoStatus === "disconnected" || redisStatus === "disconnected") {
+      return res.status(503).json({ ...health, status: "degraded" });
+    }
+
+    res.status(200).json(health);
+  } catch (error) {
+    res.status(503).json({
+      status: "error",
+      message: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Root endpoint
+app.get("/", (req, res) => {
+  res.json({
+    name: "CodeMind API",
+    version: "1.0.0",
+    status: "running",
+    endpoints: {
+      health: "/health",
+      api: "/api/v1",
+    },
+  });
+});
+
 app.listen(process.env.PORT, (req, res) => {
   console.log("🚀 Server is listening on port", process.env.PORT);
 });

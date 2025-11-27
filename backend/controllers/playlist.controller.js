@@ -1,7 +1,6 @@
 import Playlist from "../models/playlist.model.js";
 import Problem from "../models/problem.model.js";
 import redisClient from "../config/redis.js";
-import upstashRedisClient from "../config/redis.js";
 
 // ✅ Create new playlist
 export const createPlaylist = async (req, res) => {
